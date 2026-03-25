@@ -174,7 +174,7 @@ class SocialProvider(ABC):
         headers: dict | None = None,
         params: dict | None = None,
         json: dict | None = None,
-        data: dict | None = None,
+        data: dict | bytes | None = None,
         files: dict | None = None,
         timeout: float = REQUEST_TIMEOUT,
     ) -> httpx.Response:
@@ -189,15 +189,18 @@ class SocialProvider(ABC):
             req_headers.update(headers)
 
         with httpx.Client(timeout=timeout) as client:
-            response = client.request(
-                method,
-                url,
-                headers=req_headers,
-                params=params,
-                json=json,
-                data=data,
-                files=files,
-            )
+            # httpx uses `content` for raw bytes, `data` for form mappings
+            request_kwargs: dict = {
+                "headers": req_headers,
+                "params": params,
+                "json": json,
+                "files": files,
+            }
+            if isinstance(data, bytes):
+                request_kwargs["content"] = data
+            else:
+                request_kwargs["data"] = data
+            response = client.request(method, url, **request_kwargs)
 
         if response.status_code == 429:
             retry_after = response.headers.get("Retry-After")
