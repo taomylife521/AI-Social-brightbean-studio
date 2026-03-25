@@ -79,6 +79,12 @@ def compose(request, workspace_id, post_id=None):
     # Load existing post or prepare a blank one
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
+        # Enforce edit permissions: authors can edit their own posts,
+        # but editing another user's post requires edit_others_posts.
+        membership = request.workspace_membership
+        perms = membership.effective_permissions if membership else {}
+        if post.author != request.user and not perms.get("edit_others_posts", False):
+            raise PermissionDenied("You do not have permission to edit this post.")
         form = PostForm(instance=post)
         selected_account_ids = list(post.platform_posts.values_list("social_account_id", flat=True))
         media_attachments = post.media_attachments.select_related("media_asset").all()
@@ -140,6 +146,11 @@ def save_post(request, workspace_id, post_id=None):
 
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
+        # Enforce edit permissions: authors can edit their own, others need edit_others_posts
+        membership = request.workspace_membership
+        perms = membership.effective_permissions if membership else {}
+        if post.author != request.user and not perms.get("edit_others_posts", False):
+            raise PermissionDenied("You do not have permission to edit this post.")
         form = PostForm(request.POST, instance=post)
     else:
         form = PostForm(request.POST)
@@ -164,10 +175,17 @@ def save_post(request, workspace_id, post_id=None):
             naive_dt = datetime.combine(sched_date, sched_time)
             aware_dt = naive_dt.replace(tzinfo=tz)
             post.scheduled_at = aware_dt
-            post.transition_to("scheduled")
+            # Only transition if not already scheduled (scheduled → scheduled is invalid)
+            if post.status != "scheduled":
+                post.transition_to("scheduled")
         else:
             return JsonResponse({"errors": {"schedule": "Date and time required."}}, status=400)
     elif action == "publish_now":
+        # Server-side permission check — only roles with publish_directly can bypass approval
+        membership = request.workspace_membership
+        perms = membership.effective_permissions if membership else {}
+        if not perms.get("publish_directly", False):
+            raise PermissionDenied("You do not have permission to publish directly.")
         post.scheduled_at = timezone.now()
         post.transition_to("scheduled")  # Worker picks up scheduled posts where scheduled_at <= now()
     elif action == "submit_for_approval":
@@ -227,6 +245,7 @@ def save_post(request, workspace_id, post_id=None):
 
 
 @login_required
+@require_permission("create_posts")
 @require_POST
 def autosave(request, workspace_id, post_id=None):
     """Auto-save endpoint called every 30 seconds via HTMX.
@@ -240,6 +259,11 @@ def autosave(request, workspace_id, post_id=None):
     is_new = False
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
+        # Enforce edit permissions on existing posts
+        membership = request.workspace_membership
+        perms = membership.effective_permissions if membership else {}
+        if post.author != request.user and not perms.get("edit_others_posts", False):
+            raise PermissionDenied("You do not have permission to edit this post.")
     else:
         # Check if a previous autosave already created a draft for this session
         # by looking for the post_id passed from the client
