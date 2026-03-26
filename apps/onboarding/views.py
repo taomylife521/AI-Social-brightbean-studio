@@ -26,9 +26,7 @@ from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
 from apps.notifications.engine import notify
 from apps.notifications.models import EventType
-from apps.social_accounts.models import SocialAccount
 from apps.social_accounts.views import (
-    _build_redirect_uri,
     _create_or_update_account,
     _get_configured_platforms,
     _get_provider_for_platform,
