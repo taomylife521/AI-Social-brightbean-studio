@@ -13,7 +13,7 @@ from apps.workspaces.models import Workspace
 
 from . import comments as comment_service
 from . import services
-from .models import ApprovalAction, PostComment
+from .models import PostComment
 
 
 def _get_workspace(request, workspace_id):

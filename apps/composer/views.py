@@ -1,5 +1,6 @@
 """Views for the Post Composer (F-2.1)."""
 
+import contextlib
 import json
 from datetime import datetime
 
@@ -797,8 +798,6 @@ def idea_move(request, workspace_id, idea_id):
     if new_status and new_status in dict(Idea.Status.choices):
         idea.status = new_status
     if new_position is not None:
-        import contextlib
-
         with contextlib.suppress(ValueError, TypeError):
             idea.position = int(new_position)
     idea.save()

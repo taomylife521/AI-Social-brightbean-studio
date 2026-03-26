@@ -14,7 +14,6 @@ from apps.composer.models import Post
 from .decorators import portal_auth_required
 from .services import create_portal_session, verify_magic_link
 
-
 # ---------------------------------------------------------------------------
 # Magic Link Entry
 # ---------------------------------------------------------------------------
