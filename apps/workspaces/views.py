@@ -4,6 +4,8 @@ from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.members.models import OrgMembership, WorkspaceMembership
+from apps.onboarding.checklist import get_checklist_items
+from apps.onboarding.models import OnboardingChecklist
 
 from .models import Workspace
 
@@ -23,7 +25,24 @@ def detail(request, workspace_id):
     request.user.last_workspace_id = workspace.id
     request.user.save(update_fields=["last_workspace_id"])
 
-    return render(request, "workspaces/detail.html", {"workspace": workspace})
+    # Onboarding checklist
+    checklist_dismissed = OnboardingChecklist.objects.filter(
+        user=request.user, workspace=workspace, is_dismissed=True
+    ).exists()
+    checklist_items = [] if checklist_dismissed else get_checklist_items(workspace)
+    completed_count = sum(1 for item in checklist_items if item["completed"])
+
+    return render(
+        request,
+        "workspaces/detail.html",
+        {
+            "workspace": workspace,
+            "checklist_items": checklist_items,
+            "checklist_dismissed": checklist_dismissed,
+            "checklist_completed_count": completed_count,
+            "checklist_total_count": len(checklist_items),
+        },
+    )
 
 
 @login_required

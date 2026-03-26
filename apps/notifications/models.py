@@ -21,6 +21,7 @@ class EventType(models.TextChoices):
     COMMENT_MENTION = "comment_mention", "Mentioned in a comment"
     APPROVAL_REMINDER = "approval_reminder", "Approval reminder"
     APPROVAL_STALLED = "approval_stalled", "Stalled approval escalation"
+    CLIENT_CONNECTED_ACCOUNTS = "client_connected_accounts", "Client connected accounts"
 
 
 class Channel(models.TextChoices):

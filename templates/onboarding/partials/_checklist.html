@@ -1,0 +1,109 @@
+{% if not checklist_dismissed and checklist_items %}
+<div id="onboarding-checklist" style="
+    background: var(--surface-0);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+    margin-bottom: 24px;
+">
+    <!-- Header -->
+    <div style="padding: 20px 24px; border-bottom: 1px solid var(--surface-2); display: flex; align-items: center; justify-content: space-between;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="
+                width: 32px; height: 32px;
+                background: var(--primary-soft);
+                border-radius: var(--radius-lg);
+                display: flex; align-items: center; justify-content: center;
+            ">
+                <svg width="16" height="16" fill="none" stroke="var(--primary)" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+                </svg>
+            </div>
+            <div>
+                <h3 style="font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); margin: 0;">Get started</h3>
+                <p style="font-size: 0.75rem; color: var(--text-tertiary); margin: 2px 0 0;">{{ checklist_completed_count }} of {{ checklist_total_count }} complete</p>
+            </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <!-- Progress bar -->
+            <div style="width: 80px; height: 4px; background: var(--surface-2); border-radius: var(--radius-full); overflow: hidden;">
+                <div style="
+                    width: {% widthratio checklist_completed_count checklist_total_count 100 %}%;
+                    height: 100%;
+                    background: var(--primary);
+                    border-radius: var(--radius-full);
+                    transition: width 0.3s ease;
+                "></div>
+            </div>
+            <!-- Dismiss button -->
+            <button
+                hx-post="{% url 'onboarding:dismiss_checklist' workspace_id=workspace.id %}"
+                hx-target="#onboarding-checklist"
+                hx-swap="outerHTML"
+                style="
+                    width: 28px; height: 28px;
+                    display: flex; align-items: center; justify-content: center;
+                    border-radius: var(--radius-md);
+                    border: none; background: transparent;
+                    color: var(--text-ghost); cursor: pointer;
+                    transition: all 150ms ease;
+                "
+                onmouseover="this.style.background='var(--surface-1)';this.style.color='var(--text-secondary)'"
+                onmouseout="this.style.background='transparent';this.style.color='var(--text-ghost)'"
+                title="Dismiss checklist"
+            >
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Checklist items -->
+    {% for item in checklist_items %}
+    <a href="{{ item.url }}" style="
+        display: flex; align-items: center; gap: 16px;
+        padding: 14px 24px;
+        {% if not forloop.last %}border-bottom: 1px solid var(--surface-2);{% endif %}
+        text-decoration: none;
+        transition: background 150ms ease;
+    " onmouseover="this.style.background='var(--surface-1)'" onmouseout="this.style.background='transparent'">
+        {% if item.completed %}
+        <!-- Completed checkmark -->
+        <div style="
+            width: 36px; height: 36px; flex-shrink: 0;
+            background: var(--success-50);
+            border-radius: var(--radius-lg);
+            display: flex; align-items: center; justify-content: center;
+        ">
+            <svg width="18" height="18" fill="none" stroke="var(--success-500)" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"/>
+            </svg>
+        </div>
+        {% else %}
+        <!-- Pending icon -->
+        <div style="
+            width: 36px; height: 36px; flex-shrink: 0;
+            background: {% if item.icon_color == 'sky' %}var(--accent-sky-soft){% elif item.icon_color == 'emerald' %}var(--accent-emerald-soft){% elif item.icon_color == 'indigo' %}var(--accent-indigo-soft){% elif item.icon_color == 'brand' %}var(--primary-soft){% elif item.icon_color == 'amber' %}var(--accent-amber-soft){% else %}var(--surface-2){% endif %};
+            border-radius: var(--radius-lg);
+            display: flex; align-items: center; justify-content: center;
+        ">
+            <svg width="18" height="18" fill="none" stroke="{% if item.icon_color == 'sky' %}var(--accent-sky){% elif item.icon_color == 'emerald' %}var(--accent-emerald){% elif item.icon_color == 'indigo' %}var(--accent-indigo){% elif item.icon_color == 'brand' %}var(--primary){% elif item.icon_color == 'amber' %}var(--accent-amber){% else %}var(--text-tertiary){% endif %}" viewBox="0 0 24 24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                {{ item.icon_svg|safe }}
+            </svg>
+        </div>
+        {% endif %}
+        <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 0.875rem; font-weight: 600; color: {% if item.completed %}var(--text-tertiary){% else %}var(--text-primary){% endif %}; {% if item.completed %}text-decoration: line-through;{% endif %}">{{ item.title }}</div>
+            <div style="font-size: 0.8125rem; color: var(--text-tertiary); margin-top: 2px;">{{ item.description }}</div>
+        </div>
+        {% if not item.completed %}
+        <svg width="16" height="16" fill="none" stroke="var(--text-ghost)" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 18l6-6-6-6"/>
+        </svg>
+        {% endif %}
+    </a>
+    {% endfor %}
+</div>
+{% endif %}
