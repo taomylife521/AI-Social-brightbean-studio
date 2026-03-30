@@ -30,8 +30,8 @@ from .models import (
     ContentCategory,
     Feed,
     Idea,
-    IdeaMedia,
     IdeaGroup,
+    IdeaMedia,
     PlatformPost,
     Post,
     PostMedia,
@@ -577,7 +577,6 @@ def preview(request, workspace_id):
 
     media_items = []
     post_id_str = request.GET.get("_autosave_post_id", "")
-    pending_media_ids_str = request.GET.get("pending_media_ids", "")
 
     if post_id_str:
         try:
@@ -821,11 +820,8 @@ def remove_pending_media(request, workspace_id, asset_id):
     # Delete the asset and its files from storage (R2)
     asset = MediaAsset.objects.filter(id=asset_id, workspace=workspace).first()
     if asset:
-        try:
+        with contextlib.suppress(Exception):
             delete_asset(asset)
-        except Exception:
-            # If protected (referenced by posts), just remove from pending
-            pass
 
     # Return updated pending list
     pending_assets = MediaAsset.objects.filter(id__in=pending, workspace=workspace)

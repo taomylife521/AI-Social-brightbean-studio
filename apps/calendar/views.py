@@ -17,7 +17,7 @@ from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
 from .holidays import get_holidays_for_range
-from .models import CustomCalendarEvent, PostingSlot, Queue, QueueEntry
+from .models import CustomCalendarEvent, PostingSlot, Queue
 
 # Common timezones for the publish page timezone dropdown
 COMMON_TIMEZONES = [

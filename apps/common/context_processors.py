@@ -75,11 +75,7 @@ def sidebar_context(request):
         from apps.composer.models import IdeaGroup, Tag
 
         groups = IdeaGroup.objects.for_workspace(workspace.id).order_by("position", "created_at")
-        if groups.exists():
-            sidebar_idea_columns = [{"id": str(g.id), "label": g.name} for g in groups]
-        else:
-            # Use default labels without creating them here
-            sidebar_idea_columns = []
+        sidebar_idea_columns = [{"id": str(g.id), "label": g.name} for g in groups] if groups.exists() else []
         sidebar_idea_tags = list(Tag.objects.for_workspace(workspace.id).values_list("name", flat=True))
 
     return {

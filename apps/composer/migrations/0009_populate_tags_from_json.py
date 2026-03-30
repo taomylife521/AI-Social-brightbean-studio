@@ -13,8 +13,8 @@ def populate_tags(apps, schema_editor):
     seen = set()
     tags_to_create = []
 
-    for Model in (Post, Idea):
-        for obj in Model.objects.exclude(tags=[]).exclude(tags__isnull=True):
+    for model_cls in (Post, Idea):
+        for obj in model_cls.objects.exclude(tags=[]).exclude(tags__isnull=True):
             for tag_name in obj.tags:
                 key = (obj.workspace_id, tag_name)
                 if key not in seen:
