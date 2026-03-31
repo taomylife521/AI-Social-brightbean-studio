@@ -3,7 +3,8 @@ Calendar mode shell for the Publish page.
 Toolbar: nav arrows + period + Today + view dropdown | right: filter dropdowns.
 {% endcomment %}
 
-<div x-data="{ ...calendarApp(), showEventForm: false, viewOpen: false }"
+<div class="flex-1 flex flex-col min-h-0 -mx-6"
+     x-data="{ ...calendarApp(), showEventForm: false, viewOpen: false }"
      @calendar-refresh.window="htmx.trigger('#calendar-content', 'refresh')"
      hx-trigger="calendarRefresh from:body"
      hx-get="{% url 'calendar:calendar' workspace_id=workspace.id %}?mode=calendar&view={{ view_type }}&date={{ target_date|date:'Y-m-d' }}{% if show_holidays %}&holidays=1{% endif %}"
@@ -11,7 +12,7 @@ Toolbar: nav arrows + period + Today + view dropdown | right: filter dropdowns.
      hx-swap="innerHTML">
 
     <!-- Toolbar -->
-    <div class="bg-white border-b border-stone-200 px-6 pb-2 flex items-center gap-3 -mx-6">
+    <div class="bg-white border-b border-stone-200 px-6 pb-2 flex items-center gap-3">
 
         <!-- Left: Navigation arrows + period label + Today + View dropdown -->
         <div class="flex items-center gap-2">
@@ -113,12 +114,12 @@ Toolbar: nav arrows + period + Today + view dropdown | right: filter dropdowns.
          x-transition:enter="transition ease-out duration-150"
          x-transition:enter-start="opacity-0 -translate-y-2"
          x-transition:enter-end="opacity-100 translate-y-0"
-         class="bg-white border-b border-stone-200 shadow-sm -mx-6">
+         class="bg-white border-b border-stone-200 shadow-sm">
         {% include "calendar/partials/event_form.html" %}
     </div>
 
     <!-- Calendar content area (swapped by HTMX) -->
-    <div id="calendar-content" class="-mx-6">
+    <div id="calendar-content" class="flex-1 overflow-y-auto min-h-0">
         {% if view_type == 'month' %}
             {% include "calendar/partials/month_grid.html" %}
         {% elif view_type == 'week' %}
