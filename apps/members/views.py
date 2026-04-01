@@ -1,6 +1,5 @@
 """Views for team member management."""
 
-import json
 
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
@@ -13,7 +12,6 @@ from apps.workspaces.models import Workspace
 from . import services
 from .decorators import require_org_role
 from .models import Invitation, OrgMembership, WorkspaceMembership
-
 
 # ---------------------------------------------------------------------------
 # Team Members List

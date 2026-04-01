@@ -62,7 +62,6 @@ def create_organization_on_signup(sender, request, user, **kwargs):
     if pending_token:
         from apps.members.models import Invitation, OrgMembership
         from apps.members.services import accept_invitation
-        from apps.organizations.models import Organization
         from apps.workspaces.models import Workspace
 
         try:
