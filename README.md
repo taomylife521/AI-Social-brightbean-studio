@@ -41,22 +41,35 @@ You can deploy it with a one-click button on Heroku, Render, or Railway, run it 
 | **Security & ops** | Encrypted token & credential storage, optional 2FA (TOTP), Google/GitHub SSO, Sentry support, and a 7-day reversible org-deletion grace period. |
 | **White-label friendly** | Per-workspace branding (logo, colors) and workspace defaults for hashtags, first comments, and posting templates. |
 
+### A quick look
+
+<table>
+  <tr>
+    <td width="50%"><img src=".github/assets/BrightBean%20Studio%20Calendar.webp" alt="Calendar view"><br><sub><b>Visual calendar</b> - drag-and-drop scheduling with recurring slots and queues.</sub></td>
+    <td width="50%"><img src=".github/assets/BrightBean%20Studio%20Post%20Editor.webp" alt="Post editor"><br><sub><b>Post editor</b> - composer with per-platform overrides and previews.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src=".github/assets/BrightBean%20Studio%20Idea%20Kanban%20Board.webp" alt="Idea kanban board"><br><sub><b>Idea board</b> - Kanban workflow to keep track of all your post ideas.</sub></td>
+    <td width="50%"><img src=".github/assets/BrightBean%20Social%20Media%20Platforms.webp" alt="Connected platforms"><br><sub><b>Connect anything</b> - 10+ first-party integrations, no aggregator.</sub></td>
+  </tr>
+</table>
+
 ## Supported Platforms
 
 | Platform | Publish | Comments | DMs | Insights |
 |---|:---:|:---:|:---:|:---:|
-| Facebook | ✓ | ✓ | ✓ | ✓ |
-| Instagram | ✓ | ✓ | ✓ | ✓ |
-| Instagram (Personal) | ✓ | ✓ | ✓ | ✓ |
-| LinkedIn (Personal) | ✓ | ✓ | — | ✓ |
-| LinkedIn (Company) | ✓ | ✓ | — | ✓ |
-| TikTok | ✓ | ✓ | — | ✓ |
-| YouTube | ✓ | ✓ | — | ✓ |
-| Pinterest | ✓ | — | — | ✓ |
-| Threads | ✓ | ✓ | — | ✓ |
-| Bluesky | ✓ | ✓ | — | — |
-| Google Business Profile | ✓ | — | — | ✓ |
-| Mastodon | ✓ | ✓ | — | — |
+| <img src="https://cdn.simpleicons.org/facebook" width="16" height="16"> Facebook | ✓ | ✓ | ✓ | ✓ |
+| <img src="https://cdn.simpleicons.org/instagram" width="16" height="16"> Instagram | ✓ | ✓ | ✓ | ✓ |
+| <img src="https://cdn.simpleicons.org/instagram" width="16" height="16"> Instagram (Personal) | ✓ | ✓ | ✓ | ✓ |
+| <img src="https://api.iconify.design/logos/linkedin-icon.svg" width="16" height="16"> LinkedIn (Personal) | ✓ | ✓ | — | ✓ |
+| <img src="https://api.iconify.design/logos/linkedin-icon.svg" width="16" height="16"> LinkedIn (Company) | ✓ | ✓ | — | ✓ |
+| <img src="https://cdn.simpleicons.org/tiktok" width="16" height="16"> TikTok | ✓ | ✓ | — | ✓ |
+| <img src="https://cdn.simpleicons.org/youtube" width="16" height="16"> YouTube | ✓ | ✓ | — | ✓ |
+| <img src="https://cdn.simpleicons.org/pinterest" width="16" height="16"> Pinterest | ✓ | — | — | ✓ |
+| <img src="https://cdn.simpleicons.org/threads" width="16" height="16"> Threads | ✓ | ✓ | — | ✓ |
+| <img src="https://cdn.simpleicons.org/bluesky" width="16" height="16"> Bluesky | ✓ | ✓ | — | — |
+| <img src="https://api.iconify.design/logos/google-icon.svg" width="16" height="16"> Google Business Profile | ✓ | — | — | ✓ |
+| <img src="https://cdn.simpleicons.org/mastodon" width="16" height="16"> Mastodon | ✓ | ✓ | — | — |
 
 ---
 
