@@ -1046,7 +1046,7 @@
                     <span x-text="viewingTemplate?.emoji"></span>
                 </div>
                 <!-- Title -->
-                <h2 class="text-xl font-bold text-stone-900 mb-2" style="font-family: var(--font-display); letter-spacing: -0.01em;"
+                <h2 class="text-xl font-bold text-stone-900 mb-2" style="letter-spacing: -0.01em;"
                     x-text="viewingTemplate?.title"></h2>
                 <!-- Description -->
                 <p class="text-sm leading-relaxed" style="color: var(--text-tertiary);"
@@ -1069,8 +1069,8 @@
                             <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
                         </button>
                         <button type="button" @click="useTemplate()"
-                                class="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer"
-                                style="background: rgba(var(--primary-rgb, 249, 115, 22), 0.12); color: var(--primary);"
+                                class="inline-flex items-center border gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer"
+                                style="background: rgba(var(--primary-rgb, 249, 115, 22), 0.12); color: var(--primary);border-color: var(--primary); "
                                 onmouseenter="this.style.background='rgba(var(--primary-rgb, 249, 115, 22), 0.2)'"
                                 onmouseleave="this.style.background='rgba(var(--primary-rgb, 249, 115, 22), 0.12)'">
                             <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
