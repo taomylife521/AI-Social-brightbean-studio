@@ -7,6 +7,7 @@ import logging
 import secrets
 from datetime import timedelta
 
+from csp.decorators import csp_update
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -14,7 +15,6 @@ from django.core import signing
 from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
-from csp.decorators import csp_update
 from django.views.decorators.http import require_GET, require_POST
 from django_ratelimit.decorators import ratelimit
 
