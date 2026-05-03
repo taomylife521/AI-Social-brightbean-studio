@@ -4,7 +4,7 @@
 
 {% block page_header %}
 <div class="flex items-center gap-3">
-  <a href="{% url 'media_library:index' workspace_id=workspace.id %}"
+  <a href="{% if is_shared_library %}{% url 'media_library_org:shared_index' %}{% else %}{% url 'media_library:index' workspace_id=workspace.id %}{% endif %}"
      class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
      style="color: var(--text-tertiary, #78716C);"
      onmouseenter="this.style.background='var(--surface-2)'"

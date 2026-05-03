@@ -985,7 +985,11 @@ def media_picker(request, workspace_id, post_id=None):
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
 
-    assets = MediaAsset.objects.for_workspace(workspace.id).order_by("-created_at")[:50]
+    assets = (
+        MediaAsset.objects
+        .for_workspace_with_shared(workspace.id, workspace.organization_id)
+        .order_by("-created_at")[:50]
+    )
     return render(
         request,
         "composer/partials/media_picker.html",
@@ -1136,7 +1140,10 @@ def attach_media(request, workspace_id, post_id):
 
     from apps.media_library.models import MediaAsset
 
-    asset = get_object_or_404(MediaAsset, id=media_asset_id, workspace=workspace)
+    asset = get_object_or_404(
+        MediaAsset.objects.for_workspace_with_shared(workspace.id, workspace.organization_id),
+        id=media_asset_id,
+    )
 
     max_pos = post.media_attachments.aggregate(models.Max("position"))["position__max"]
     position = (max_pos or 0) + 1
@@ -1172,7 +1179,10 @@ def attach_pending_media(request, workspace_id):
 
     from apps.media_library.models import MediaAsset
 
-    asset = get_object_or_404(MediaAsset, id=media_asset_id, workspace=workspace)
+    asset = get_object_or_404(
+        MediaAsset.objects.for_workspace_with_shared(workspace.id, workspace.organization_id),
+        id=media_asset_id,
+    )
 
     session_key = f"pending_media_{workspace.id}"
     pending = request.session.get(session_key, [])
