@@ -199,7 +199,7 @@ def account_list(request, workspace_id):
 
 
 @csp_update(
-    FORM_ACTION="'self' https://accounts.google.com https://www.facebook.com https://api.instagram.com https://www.instagram.com https://threads.net https://www.linkedin.com https://www.pinterest.com https://www.tiktok.com"
+    FORM_ACTION="'self' https://accounts.google.com https://www.facebook.com https://api.instagram.com https://www.instagram.com https://threads.net https://www.threads.com https://www.linkedin.com https://www.pinterest.com https://www.tiktok.com"
 )
 @login_required
 @require_permission("manage_social_accounts")
@@ -618,7 +618,7 @@ def connect_mastodon(request, workspace_id):
 
 
 @csp_update(
-    FORM_ACTION="'self' https://accounts.google.com https://www.facebook.com https://api.instagram.com https://www.instagram.com https://threads.net https://www.linkedin.com https://www.pinterest.com https://www.tiktok.com"
+    FORM_ACTION="'self' https://accounts.google.com https://www.facebook.com https://api.instagram.com https://www.instagram.com https://threads.net https://www.threads.com https://www.linkedin.com https://www.pinterest.com https://www.tiktok.com"
 )
 @login_required
 @require_permission("manage_social_accounts")
