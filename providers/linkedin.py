@@ -32,9 +32,12 @@ TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 REVOKE_URL = "https://www.linkedin.com/oauth/v2/revoke"
 API_BASE = "https://api.linkedin.com"
 
-# Required headers for LinkedIn REST API
+# Required headers for LinkedIn REST API.
+# LinkedIn sunsets versioned APIs after ~1 year; bump LinkedIn-Version
+# to the latest YYYYMM at https://learn.microsoft.com/en-us/linkedin/marketing/versioning
+# before the current value falls out of support.
 LINKEDIN_HEADERS = {
-    "LinkedIn-Version": "202401",
+    "LinkedIn-Version": "202604",
     "X-Restli-Protocol-Version": "2.0.0",
 }
 
