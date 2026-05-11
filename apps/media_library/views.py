@@ -426,10 +426,7 @@ def asset_update_tags(request, workspace_id, asset_id):
     )
 
     try:
-        if request.content_type == "application/json":
-            body = json.loads(request.body)
-        else:
-            body = request.POST.getlist("tags")
+        body = json.loads(request.body) if request.content_type == "application/json" else request.POST.getlist("tags")
         asset.tags = _normalize_tags(body)
     except (json.JSONDecodeError, ValueError) as e:
         return JsonResponse({"error": str(e)}, status=400)
@@ -1091,10 +1088,7 @@ def shared_asset_update_tags(request, asset_id):
     asset = get_object_or_404(MediaAsset.objects.shared_only(org.id), pk=asset_id)
 
     try:
-        if request.content_type == "application/json":
-            body = json.loads(request.body)
-        else:
-            body = request.POST.getlist("tags")
+        body = json.loads(request.body) if request.content_type == "application/json" else request.POST.getlist("tags")
         asset.tags = _normalize_tags(body)
     except (json.JSONDecodeError, ValueError) as e:
         return JsonResponse({"error": str(e)}, status=400)
