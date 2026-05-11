@@ -1,6 +1,7 @@
+{% load common_extras %}
 {% comment %}Tag editor with autocomplete. Expects: asset, workspace, is_shared_library, is_admin{% endcomment %}
 
-<div x-data="tagInput({{ asset.tags|safe }})" class="space-y-2">
+<div x-data="tagInput({{ asset.tags|json_attr }})" class="space-y-2">
   <!-- Current tags -->
   <div class="flex flex-wrap gap-1.5">
     <template x-for="(tag, i) in tags" :key="i">
