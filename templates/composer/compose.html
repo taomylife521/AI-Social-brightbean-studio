@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load static %}
+{% load common_extras %}
 
 {% block title %}{% if is_edit %}Edit Post{% else %}New Post{% endif %} - {{ workspace.name }} - Brightbean{% endblock %}
 
@@ -769,7 +770,7 @@
 
                 <!-- Tags (dropdown with search & create) -->
                 <div class="relative" x-data="{
-                    tags: {{ post.tags|default:'[]'|safe }},
+                    tags: {{ post.tags|json_attr }},
                     tagDropdownOpen: false,
                     tagSearch: '',
                     allTags: [{% for tag in all_tags %}'{{ tag.name|escapejs }}'{% if not forloop.last %},{% endif %}{% endfor %}],

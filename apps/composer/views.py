@@ -2351,8 +2351,6 @@ def csv_upload(request, workspace_id):
             "filename": csv_file.name,
         }
 
-        import json as json_mod
-
         return render(
             request,
             "composer/partials/csv_mapping.html",
@@ -2361,7 +2359,6 @@ def csv_upload(request, workspace_id):
                 "headers": headers,
                 "preview_rows": preview_rows,
                 "auto_mapping": auto_mapping,
-                "auto_mapping_json": json_mod.dumps(auto_mapping),
                 "field_choices": list(field_map.keys()),
             },
         )
