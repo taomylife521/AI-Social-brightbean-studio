@@ -63,7 +63,7 @@ class JsonAttrFilterTest(SimpleTestCase):
     """Test the json_attr template filter (attribute-context XSS guard)."""
 
     def test_escapes_script_payload(self):
-        out = str(json_attr(['<script>alert(1)</script>', '"><img src=x>']))
+        out = str(json_attr(["<script>alert(1)</script>", '"><img src=x>']))
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", out)
         self.assertIn("&quot;", out)
         self.assertNotIn("<script>", out)
@@ -108,7 +108,7 @@ class TagInputTemplateTest(SimpleTestCase):
     def test_malicious_tag_is_escaped_in_x_data(self):
         rendered = self._render(['"><script>alert(1)</script>'])
         match = re.search(r'x-data="tagInput\(([^"]*)\)"', rendered)
-        self.assertIsNotNone(match, "x-data attribute should still be quoted with \"")
+        self.assertIsNotNone(match, 'x-data attribute should still be quoted with "')
         attr_body = match.group(1)
         self.assertIn("&lt;script&gt;", attr_body)
         self.assertIn("&quot;", attr_body)
