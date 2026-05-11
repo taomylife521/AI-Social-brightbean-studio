@@ -1582,6 +1582,9 @@ function composerApp() {
         },
 
         onFormSaved(event) {
+            // Only react to the form's own submit, not htmx requests bubbling from
+            // child elements (e.g. the pending-media remove button).
+            if (event.detail.elt !== event.currentTarget) return;
             const xhr = event.detail.xhr;
             if (event.detail.successful) {
                 const action = document.getElementById('publish-action-btn')?.value;
@@ -1720,7 +1723,11 @@ function composerApp() {
                 if (xhr.status >= 200 && xhr.status < 300) {
                     // Replace the upload placeholder with the server-rendered thumb
                     thumb.insertAdjacentHTML('afterend', xhr.responseText);
+                    const inserted = thumb.nextElementSibling;
                     thumb.remove();
+                    if (inserted && window.htmx) {
+                        window.htmx.process(inserted.parentElement);
+                    }
                     if (self.autosavedPostId && !self.uploadUrl.includes(self.autosavedPostId)) {
                         self.uploadUrl = `/workspace/{{ workspace.id }}/compose/${self.autosavedPostId}/upload-media/`;
                     }
@@ -1783,24 +1790,6 @@ function composerApp() {
             });
         }
     };
-}
-
-async function removePendingMedia(assetId, url, btn) {
-    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value
-        || document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';
-    try {
-        const resp = await fetch(url, {
-            method: 'POST',
-            headers: { 'X-CSRFToken': csrfToken },
-        });
-        if (resp.ok) {
-            const html = await resp.text();
-            document.getElementById('media-list').innerHTML = html;
-            document.body.dispatchEvent(new CustomEvent('previewUpdate'));
-        }
-    } catch (err) {
-        console.error('Remove failed:', err);
-    }
 }
 
 /* ── Publish Split-Button (vanilla JS) ────────────────────────── */
