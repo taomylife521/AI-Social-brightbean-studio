@@ -6,6 +6,7 @@ import re
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
+from urllib.parse import urljoin
 
 import httpx
 from dateutil import parser as date_parser
@@ -20,6 +21,11 @@ from django.utils import timezone
 from django.utils.html import strip_tags
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.common.validators import (
+    is_safe_url,
+    parse_and_truncate_tag_string,
+    parse_and_truncate_youtube_tag_string,
+)
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
 from apps.social_accounts.models import SocialAccount
@@ -39,6 +45,8 @@ from .models import (
     PostVersion,
     Tag,
 )
+
+MAX_CSV_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB cap on CSV planner imports
 
 
 def _get_workspace(request, workspace_id):
@@ -88,8 +96,7 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
 
         # Per-platform extras
         if account.platform == "youtube":
-            tags_raw = request.POST.get(f"yt_tags_{acc_id}", "")
-            tags_list = [t.strip() for t in tags_raw.split(",") if t.strip()]
+            tags_list = parse_and_truncate_youtube_tag_string(request.POST.get(f"yt_tags_{acc_id}", ""))
             privacy_status = request.POST.get(f"yt_privacy_status_{acc_id}", "public")
             if privacy_status not in ("public", "unlisted", "private"):
                 privacy_status = "public"
@@ -444,11 +451,10 @@ def compose(request, workspace_id, post_id=None):
         "form": form,
         "social_accounts": social_accounts,
         "selected_account_ids": [str(aid) for aid in selected_account_ids],
-        "platform_extras_json": json.dumps(platform_extras),
+        "platform_extras": platform_extras,
         "media_attachments": media_attachments,
         "media_items": media_items,
-        "media_items_json": json.dumps(media_items),
-        "char_limits_json": json.dumps(char_limits),
+        "char_limits": char_limits,
         "default_first_comment": default_first_comment,
         "default_hashtags": json.dumps(default_hashtags),
         "can_publish": can_publish,
@@ -843,9 +849,7 @@ def autosave(request, workspace_id, post_id=None):
     post.first_comment = request.POST.get("first_comment", "")
     post.internal_notes = request.POST.get("internal_notes", "")
 
-    tags_raw = request.POST.get("tags", "")
-    if tags_raw:
-        post.tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
+    post.tags = parse_and_truncate_tag_string(request.POST.get("tags", ""))
 
     post.save()
 
@@ -1727,8 +1731,7 @@ def idea_create(request, workspace_id):
     workspace = _get_workspace(request, workspace_id)
     title = request.POST.get("title", "").strip()
     description = request.POST.get("description", "").strip()
-    tags_raw = request.POST.get("tags", "")
-    tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
+    tags = parse_and_truncate_tag_string(request.POST.get("tags", ""))
 
     if not title:
         return HttpResponse("Title is required.", status=400)
@@ -1811,8 +1814,7 @@ def idea_edit(request, workspace_id, idea_id):
 
     idea.title = request.POST.get("title", idea.title).strip()
     idea.description = request.POST.get("description", idea.description).strip()
-    tags_raw = request.POST.get("tags", "")
-    idea.tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
+    idea.tags = parse_and_truncate_tag_string(request.POST.get("tags", ""))
 
     group_id = request.POST.get("group", "").strip()
     if group_id:
@@ -2312,6 +2314,12 @@ def csv_upload(request, workspace_id):
         import io
 
         csv_file = request.FILES["csv_file"]
+        if csv_file.size and csv_file.size > MAX_CSV_UPLOAD_BYTES:
+            return render(
+                request,
+                "composer/csv_import.html",
+                {"workspace": workspace, "error": "CSV file too large (max 5 MB)."},
+            )
         decoded = csv_file.read().decode("utf-8-sig")
         reader = csv.reader(io.StringIO(decoded))
         rows = list(reader)
@@ -2920,14 +2928,36 @@ def _render_feeds_tab(
 
 def _validate_rss_url(rss_url):
     """Validate that a URL points to a reachable RSS/Atom XML feed."""
+    if not is_safe_url(rss_url):
+        return False, "Could not reach this URL. Please check the link and try again.", {}
+
     headers = {
         "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.1",
         "User-Agent": "Brightbean RSS Validator/1.0",
     }
     try:
-        response = httpx.get(rss_url, headers=headers, timeout=8.0, follow_redirects=True)
+        response = httpx.get(rss_url, headers=headers, timeout=8.0, follow_redirects=False)
     except httpx.RequestError:
         return False, "Could not reach this URL. Please check the link and try again.", {}
+
+    # Follow up to 5 redirects, resolving relative Locations against the current
+    # request URL and re-validating each absolute hop against is_safe_url to
+    # defend against redirect-based SSRF (e.g. 302 → http://127.0.0.1).
+    current_url = rss_url
+    for _ in range(5):
+        if response.status_code not in (301, 302, 303, 307, 308):
+            break
+        location = response.headers.get("Location")
+        if not location:
+            return False, "Could not reach this URL. Please check the link and try again.", {}
+        next_url = urljoin(current_url, location)
+        if not is_safe_url(next_url):
+            return False, "Could not reach this URL. Please check the link and try again.", {}
+        try:
+            response = httpx.get(next_url, headers=headers, timeout=8.0, follow_redirects=False)
+        except httpx.RequestError:
+            return False, "Could not reach this URL. Please check the link and try again.", {}
+        current_url = next_url
 
     if response.status_code >= 400:
         return False, "This URL could not be loaded as a feed.", {}

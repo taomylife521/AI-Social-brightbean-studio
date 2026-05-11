@@ -10,6 +10,7 @@ from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
+from apps.common.validators import normalize_tags
 from apps.members.decorators import require_org_role, require_permission
 
 from .models import MediaAsset, MediaFolder
@@ -30,36 +31,6 @@ def _get_workspace_or_404(request, workspace_id):
     if not request.workspace or str(request.workspace.id) != str(workspace_id):
         raise Http404
     return request.workspace
-
-
-MAX_TAGS_PER_ASSET = 25
-MAX_TAG_LENGTH = 100
-
-
-def _normalize_tags(raw) -> list[str]:
-    """Validate and normalize a tag list from request input.
-
-    Raises ValueError on malformed input — caller should return HTTP 400.
-    """
-    if not isinstance(raw, list):
-        raise ValueError("tags must be a list")
-    if len(raw) > MAX_TAGS_PER_ASSET:
-        raise ValueError(f"too many tags (max {MAX_TAGS_PER_ASSET})")
-    out: list[str] = []
-    seen: set[str] = set()
-    for t in raw:
-        if not isinstance(t, str):
-            raise ValueError("each tag must be a string")
-        t = t.strip()
-        if not t:
-            continue
-        if len(t) > MAX_TAG_LENGTH:
-            raise ValueError(f"tag too long (max {MAX_TAG_LENGTH} chars)")
-        if t in seen:
-            continue
-        seen.add(t)
-        out.append(t)
-    return out
 
 
 # ──────────────────────────────────────────────────────────────
@@ -427,7 +398,7 @@ def asset_update_tags(request, workspace_id, asset_id):
 
     try:
         body = json.loads(request.body) if request.content_type == "application/json" else request.POST.getlist("tags")
-        asset.tags = _normalize_tags(body)
+        asset.tags = normalize_tags(body)
     except (json.JSONDecodeError, ValueError) as e:
         return JsonResponse({"error": str(e)}, status=400)
     asset.save(update_fields=["tags", "updated_at"])
@@ -1089,7 +1060,7 @@ def shared_asset_update_tags(request, asset_id):
 
     try:
         body = json.loads(request.body) if request.content_type == "application/json" else request.POST.getlist("tags")
-        asset.tags = _normalize_tags(body)
+        asset.tags = normalize_tags(body)
     except (json.JSONDecodeError, ValueError) as e:
         return JsonResponse({"error": str(e)}, status=400)
     asset.save(update_fields=["tags", "updated_at"])
