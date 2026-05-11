@@ -72,6 +72,13 @@ class JsonAttrFilterTest(SimpleTestCase):
     def test_none_returns_empty_array_literal(self):
         self.assertEqual(str(json_attr(None)), "[]")
 
+    def test_empty_string_returns_empty_array_literal(self):
+        # Django's string_if_invalid fallback for unresolved template
+        # vars (e.g. `{{ post.tags }}` when `post is None`) renders as "".
+        # That must not serialize to the JS string `""` — Alpine would
+        # initialize `tags` as a string and break .push()/.includes().
+        self.assertEqual(str(json_attr("")), "[]")
+
     def test_dict_is_serialized(self):
         out = str(json_attr({"a": 1, "b": "x"}))
         self.assertIn("&quot;a&quot;: 1", out)
