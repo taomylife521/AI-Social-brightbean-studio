@@ -7,12 +7,8 @@ from django.template.loader import render_to_string
 from django.test import SimpleTestCase, TestCase
 
 from apps.common.templatetags.common_extras import json_attr
+from apps.common.validators import MAX_TAG_LENGTH, MAX_TAGS, normalize_tags
 from apps.media_library.models import MediaAsset
-from apps.media_library.views import (
-    MAX_TAG_LENGTH,
-    MAX_TAGS_PER_ASSET,
-    _normalize_tags,
-)
 
 
 class MediaAssetModelTest(TestCase):
@@ -132,27 +128,27 @@ class NormalizeTagsTest(SimpleTestCase):
 
     def test_rejects_non_list(self):
         with self.assertRaises(ValueError):
-            _normalize_tags({"foo": "bar"})
+            normalize_tags({"foo": "bar"})
 
     def test_rejects_too_many(self):
         with self.assertRaises(ValueError):
-            _normalize_tags(["x"] * (MAX_TAGS_PER_ASSET + 1))
+            normalize_tags(["x"] * (MAX_TAGS + 1))
 
     def test_accepts_at_limit(self):
-        result = _normalize_tags([f"tag{i}" for i in range(MAX_TAGS_PER_ASSET)])
-        self.assertEqual(len(result), MAX_TAGS_PER_ASSET)
+        result = normalize_tags([f"tag{i}" for i in range(MAX_TAGS)])
+        self.assertEqual(len(result), MAX_TAGS)
 
     def test_rejects_oversized(self):
         with self.assertRaises(ValueError):
-            _normalize_tags(["x" * (MAX_TAG_LENGTH + 1)])
+            normalize_tags(["x" * (MAX_TAG_LENGTH + 1)])
 
     def test_rejects_non_string_element(self):
         with self.assertRaises(ValueError):
-            _normalize_tags([123])
+            normalize_tags([123])
 
     def test_strips_whitespace_and_dedupes(self):
-        self.assertEqual(_normalize_tags(["  a  ", "a", "b", "", "   "]), ["a", "b"])
+        self.assertEqual(normalize_tags(["  a  ", "a", "b", "", "   "]), ["a", "b"])
 
     def test_preserves_malicious_payload_verbatim(self):
         payload = "<script>alert(1)</script>"
-        self.assertEqual(_normalize_tags([payload]), [payload])
+        self.assertEqual(normalize_tags([payload]), [payload])
