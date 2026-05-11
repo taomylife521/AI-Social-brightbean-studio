@@ -1341,7 +1341,7 @@ def remove_pending_media(request, workspace_id, asset_id):
 
     # Return updated pending list
     pending_assets = MediaAsset.objects.filter(id__in=pending, workspace=workspace)
-    return render(
+    response = render(
         request,
         "composer/partials/media_list_pending.html",
         {
@@ -1349,6 +1349,8 @@ def remove_pending_media(request, workspace_id, asset_id):
             "workspace": workspace,
         },
     )
+    response["HX-Trigger"] = "previewUpdate"
+    return response
 
 
 @login_required
