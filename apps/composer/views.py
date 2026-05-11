@@ -6,6 +6,7 @@ import re
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
+from urllib.parse import urljoin
 
 import httpx
 from dateutil import parser as date_parser
@@ -2939,18 +2940,24 @@ def _validate_rss_url(rss_url):
     except httpx.RequestError:
         return False, "Could not reach this URL. Please check the link and try again.", {}
 
-    # Follow up to 5 redirects, re-validating each Location against is_safe_url
-    # to defend against redirect-based SSRF (e.g. 302 → http://127.0.0.1).
+    # Follow up to 5 redirects, resolving relative Locations against the current
+    # request URL and re-validating each absolute hop against is_safe_url to
+    # defend against redirect-based SSRF (e.g. 302 → http://127.0.0.1).
+    current_url = rss_url
     for _ in range(5):
         if response.status_code not in (301, 302, 303, 307, 308):
             break
         location = response.headers.get("Location")
-        if not location or not is_safe_url(location):
+        if not location:
+            return False, "Could not reach this URL. Please check the link and try again.", {}
+        next_url = urljoin(current_url, location)
+        if not is_safe_url(next_url):
             return False, "Could not reach this URL. Please check the link and try again.", {}
         try:
-            response = httpx.get(location, headers=headers, timeout=8.0, follow_redirects=False)
+            response = httpx.get(next_url, headers=headers, timeout=8.0, follow_redirects=False)
         except httpx.RequestError:
             return False, "Could not reach this URL. Please check the link and try again.", {}
+        current_url = next_url
 
     if response.status_code >= 400:
         return False, "This URL could not be loaded as a feed.", {}
