@@ -260,9 +260,19 @@ def _dispatch_email(delivery: NotificationDelivery) -> None:
 
 def _dispatch_webhook(delivery: NotificationDelivery) -> None:
     """Send notification via webhook (HTTP POST with HMAC-SHA256 signature)."""
-    import urllib.request
+    import httpx
+
+    from apps.common.validators import is_safe_url
 
     notification = delivery.notification
+
+    webhook_url = notification.data.get("webhook_url")
+    if not webhook_url:
+        logger.info("No webhook_url in notification data, skipping webhook delivery")
+        return
+
+    if not is_safe_url(webhook_url):
+        raise RuntimeError("Webhook URL rejected: must be a public http(s) endpoint")
 
     payload = json.dumps(
         {
@@ -276,11 +286,6 @@ def _dispatch_webhook(delivery: NotificationDelivery) -> None:
         default=str,
     ).encode("utf-8")
 
-    webhook_url = notification.data.get("webhook_url")
-    if not webhook_url:
-        logger.info("No webhook_url in notification data, skipping webhook delivery")
-        return
-
     webhook_secret = getattr(settings, "WEBHOOK_SECRET", settings.SECRET_KEY)
     signature = hmac.new(
         webhook_secret.encode("utf-8"),
@@ -288,20 +293,15 @@ def _dispatch_webhook(delivery: NotificationDelivery) -> None:
         hashlib.sha256,
     ).hexdigest()
 
-    req = urllib.request.Request(
-        webhook_url,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "X-Signature-256": f"sha256={signature}",
-            "X-Event-Type": notification.event_type,
-        },
-        method="POST",
-    )
+    headers = {
+        "Content-Type": "application/json",
+        "X-Signature-256": f"sha256={signature}",
+        "X-Event-Type": notification.event_type,
+    }
 
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        if resp.status >= 400:
-            raise RuntimeError(f"Webhook returned HTTP {resp.status}")
+    response = httpx.post(webhook_url, content=payload, headers=headers, timeout=10.0, follow_redirects=False)
+    if response.status_code >= 400:
+        raise RuntimeError(f"Webhook returned HTTP {response.status_code}")
 
 
 def retry_failed_deliveries() -> int:

@@ -882,10 +882,11 @@ def save_posting_slot(request, workspace_id):
 def delete_posting_slot(request, workspace_id, slot_id):
     """Delete a posting slot."""
     workspace = _get_workspace(request, workspace_id)
-    slot = get_object_or_404(PostingSlot, id=slot_id)
-    # Verify the slot belongs to this workspace
-    if slot.social_account.workspace_id != workspace.id:
-        return JsonResponse({"error": "Not found."}, status=404)
+    slot = get_object_or_404(
+        PostingSlot,
+        id=slot_id,
+        social_account__workspace=workspace,
+    )
 
     account_id = str(slot.social_account_id)
     slot.delete()
@@ -946,9 +947,11 @@ def toggle_posting_slot_day(request, workspace_id):
 def update_posting_slot(request, workspace_id, slot_id):
     """Update a posting slot's time."""
     workspace = _get_workspace(request, workspace_id)
-    slot = get_object_or_404(PostingSlot, id=slot_id)
-    if slot.social_account.workspace_id != workspace.id:
-        return JsonResponse({"error": "Not found."}, status=404)
+    slot = get_object_or_404(
+        PostingSlot,
+        id=slot_id,
+        social_account__workspace=workspace,
+    )
 
     time_str = request.POST.get("time")
     if not time_str:

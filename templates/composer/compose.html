@@ -1365,17 +1365,21 @@
 {% endblock %}
 
 {% block extra_js %}
+{{ selected_account_ids|json_script:"composer-selected-accounts" }}
+{{ char_limits|json_script:"composer-char-limits" }}
+{{ platform_extras|json_script:"composer-platform-extras" }}
+{{ media_items|json_script:"composer-media-items" }}
 <script nonce="{{ request.csp_nonce }}">
 function composerApp() {
     return {
         // State
         title: '{{ form.title.value|default:""|escapejs }}',
         caption: '{{ form.caption.value|default:""|escapejs }}',
-        selectedAccounts: {{ selected_account_ids|safe }},
-        charLimits: {{ char_limits_json|safe }},
+        selectedAccounts: JSON.parse(document.getElementById('composer-selected-accounts').textContent),
+        charLimits: JSON.parse(document.getElementById('composer-char-limits').textContent),
         overrides: {},
         advancedOpen: {},
-        platformExtras: {{ platform_extras_json|default:"{}"|safe }},
+        platformExtras: JSON.parse(document.getElementById('composer-platform-extras').textContent) || {},
         showMediaPicker: false,
         showThumbnailPicker: false,
         thumbnailPickerAccId: null,
@@ -1386,7 +1390,7 @@ function composerApp() {
         lastSaved: null,
         previewTimer: null,
         autosavedPostId: '{{ post.id|default:"" }}',
-        mediaItems: {{ media_items_json|safe }},
+        mediaItems: JSON.parse(document.getElementById('composer-media-items').textContent),
 
         // Computed-like getters for title field visibility
         get anyPlatformNeedsTitle() {
