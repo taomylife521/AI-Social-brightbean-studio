@@ -259,7 +259,15 @@ def _dispatch_email(delivery: NotificationDelivery) -> None:
 
 
 def _dispatch_webhook(delivery: NotificationDelivery) -> None:
-    """Send notification via webhook (HTTP POST with HMAC-SHA256 signature)."""
+    """Send notification via webhook (HTTP POST with HMAC-SHA256 signature).
+
+    The webhook URL is re-validated with is_safe_url at dispatch time (not just
+    when stored), and redirects are not followed. This narrows the DNS-rebind
+    window between validation and connection. We still rely on the OS-level DNS
+    cache to resolve consistently within a single dispatch; deployments with
+    aggressive DNS-rebind threat models should additionally enforce egress
+    firewall rules.
+    """
     import httpx
 
     from apps.common.validators import is_safe_url
@@ -271,6 +279,9 @@ def _dispatch_webhook(delivery: NotificationDelivery) -> None:
         logger.info("No webhook_url in notification data, skipping webhook delivery")
         return
 
+    # Re-validate immediately before the request. The single-pass DNS resolve
+    # used by is_safe_url is reused by httpx via the OS resolver cache; this
+    # is the simplest defence that doesn't add an httpx-transport dependency.
     if not is_safe_url(webhook_url):
         raise RuntimeError("Webhook URL rejected: must be a public http(s) endpoint")
 
@@ -299,7 +310,12 @@ def _dispatch_webhook(delivery: NotificationDelivery) -> None:
         "X-Event-Type": notification.event_type,
     }
 
+    # follow_redirects=False prevents a 302→private-IP bait-and-switch from a
+    # legitimate-looking endpoint. Any redirect is surfaced as a delivery
+    # failure, not silently followed.
     response = httpx.post(webhook_url, content=payload, headers=headers, timeout=10.0, follow_redirects=False)
+    if 300 <= response.status_code < 400:
+        raise RuntimeError(f"Webhook URL replied with redirect {response.status_code} — refusing to follow.")
     if response.status_code >= 400:
         raise RuntimeError(f"Webhook returned HTTP {response.status_code}")
 
