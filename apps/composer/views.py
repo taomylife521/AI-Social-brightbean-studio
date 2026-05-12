@@ -25,6 +25,7 @@ from apps.common.validators import (
     is_safe_url,
     parse_and_truncate_tag_string,
     parse_and_truncate_youtube_tag_string,
+    safe_xml_fromstring,
 )
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
@@ -2730,10 +2731,15 @@ def _parse_published_at(raw_value):
 
 
 def _parse_feed_document(xml_content):
-    """Parse RSS/Atom document into metadata and raw entries."""
-    try:
-        root = ET.fromstring(xml_content)
-    except ET.ParseError:
+    """Parse RSS/Atom document into metadata and raw entries.
+
+    Uses safe_xml_fromstring to bound size and reject DTD/entity-bearing
+    payloads (billion-laughs defence).
+    """
+    if isinstance(xml_content, str):
+        xml_content = xml_content.encode("utf-8", errors="replace")
+    root = safe_xml_fromstring(xml_content)
+    if root is None:
         return None
 
     root_name = _xml_local_name(root.tag)
