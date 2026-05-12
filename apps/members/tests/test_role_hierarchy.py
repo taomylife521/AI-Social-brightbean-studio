@@ -231,3 +231,26 @@ class ManageWorkspacesExistingRoleTests(TestCase):
         self.assertLess(response.status_code, 400)
         self.victim_ws_membership.refresh_from_db()
         self.assertEqual(self.victim_ws_membership.workspace_role, "viewer")
+
+
+class ClientPortalManagerInviteTests(TestCase):
+    """POST /workspace/<id>/settings/clients/invite/ — a workspace manager who
+    is only org-role=member must still be able to invite clients (org_role=member).
+    Regression for the Codex P1 finding."""
+
+    def setUp(self):
+        self.org = Organization.objects.create(name="Test Org")
+        self.workspace = Workspace.objects.create(organization=self.org, name="WS")
+        self.manager = _make_user("manager@example.com")
+        OrgMembership.objects.create(user=self.manager, organization=self.org, org_role="member")
+        WorkspaceMembership.objects.create(user=self.manager, workspace=self.workspace, workspace_role="manager")
+
+    def test_workspace_manager_can_invite_client(self):
+        _login(self.client, self.manager)
+        url = reverse("client_portal_admin:invite_client", kwargs={"workspace_id": self.workspace.id})
+        response = self.client.post(url, data={"email": "newclient@example.com"})
+        # 200 (HTMX) or 302 (regular redirect) both indicate success.
+        self.assertLess(response.status_code, 400)
+        from apps.members.models import Invitation
+
+        self.assertTrue(Invitation.objects.filter(email="newclient@example.com").exists())
