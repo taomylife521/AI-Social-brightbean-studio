@@ -177,3 +177,107 @@ class IsSafeUrlTest(SimpleTestCase):
     def test_accepts_public_http(self, mock_getaddrinfo):
         mock_getaddrinfo.return_value = _fake_addrinfo("93.184.216.34")
         self.assertTrue(is_safe_url("http://example.com/"))
+
+
+class ValidateHexColorTest(SimpleTestCase):
+    """Hex-color validator: 6-digit #RRGGBB or empty only."""
+
+    def test_accepts_lowercase_hex(self):
+        from apps.common.validators import validate_hex_color
+
+        validate_hex_color("#3b82f6")
+
+    def test_accepts_uppercase_hex(self):
+        from apps.common.validators import validate_hex_color
+
+        validate_hex_color("#3B82F6")
+
+    def test_accepts_empty_string(self):
+        from apps.common.validators import validate_hex_color
+
+        validate_hex_color("")
+
+    def test_accepts_none(self):
+        from apps.common.validators import validate_hex_color
+
+        validate_hex_color(None)
+
+    def test_rejects_css_injection_attempt(self):
+        from django.core.exceptions import ValidationError
+
+        from apps.common.validators import validate_hex_color
+
+        with self.assertRaises(ValidationError):
+            validate_hex_color("red;background:url(//evil)")
+
+    def test_rejects_three_digit_short_form(self):
+        from django.core.exceptions import ValidationError
+
+        from apps.common.validators import validate_hex_color
+
+        with self.assertRaises(ValidationError):
+            validate_hex_color("#f00")
+
+    def test_rejects_color_name(self):
+        from django.core.exceptions import ValidationError
+
+        from apps.common.validators import validate_hex_color
+
+        with self.assertRaises(ValidationError):
+            validate_hex_color("red")
+
+    def test_rejects_alpha_channel(self):
+        from django.core.exceptions import ValidationError
+
+        from apps.common.validators import validate_hex_color
+
+        with self.assertRaises(ValidationError):
+            validate_hex_color("#3B82F6FF")
+
+
+class SafeXmlFromStringTest(SimpleTestCase):
+    """XML hardening: bound size, reject DTD/entity declarations."""
+
+    def test_parses_normal_rss(self):
+        from apps.common.validators import safe_xml_fromstring
+
+        body = b"<?xml version='1.0'?><rss><channel><title>OK</title></channel></rss>"
+        root = safe_xml_fromstring(body)
+        self.assertIsNotNone(root)
+        self.assertEqual(root.tag, "rss")
+
+    def test_rejects_billion_laughs(self):
+        from apps.common.validators import safe_xml_fromstring
+
+        body = (
+            b"<?xml version='1.0'?>"
+            b"<!DOCTYPE lolz ["
+            b"  <!ENTITY lol 'lol'>"
+            b"  <!ENTITY lol2 '&lol;&lol;&lol;'>"
+            b"]>"
+            b"<lolz>&lol2;</lolz>"
+        )
+        self.assertIsNone(safe_xml_fromstring(body))
+
+    def test_rejects_doctype_alone(self):
+        from apps.common.validators import safe_xml_fromstring
+
+        body = b"<?xml version='1.0'?><!DOCTYPE feed><rss/>"
+        self.assertIsNone(safe_xml_fromstring(body))
+
+    def test_rejects_oversized(self):
+        from apps.common.validators import safe_xml_fromstring
+
+        body = b"<rss>" + b"x" * (6 * 1024 * 1024) + b"</rss>"
+        self.assertIsNone(safe_xml_fromstring(body))
+
+    def test_rejects_str_input(self):
+        # The helper takes bytes only — callers must encode first.
+        from apps.common.validators import safe_xml_fromstring
+
+        self.assertIsNone(safe_xml_fromstring("<rss/>"))
+
+    def test_rejects_malformed_xml(self):
+        from apps.common.validators import safe_xml_fromstring
+
+        self.assertIsNone(safe_xml_fromstring(b"<rss><channel></rss>"))

@@ -4,7 +4,6 @@ import hashlib
 import hmac
 import json
 import logging
-import xml.etree.ElementTree as ET
 
 from django.conf import settings
 from django.http import HttpResponse, HttpResponseForbidden
@@ -12,6 +11,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django_ratelimit.decorators import ratelimit
 
+from apps.common.validators import safe_xml_fromstring
 from apps.social_accounts.models import SocialAccount
 
 from .models import InboxMessage
@@ -287,10 +287,9 @@ def youtube_webhook(request):
 
 def _process_youtube_notification(body: bytes):
     """Parse Atom XML notification from YouTube and upsert messages."""
-    try:
-        root = ET.fromstring(body)
-    except ET.ParseError:
-        logger.warning("Invalid XML in YouTube webhook payload.")
+    root = safe_xml_fromstring(body)
+    if root is None:
+        logger.warning("Invalid or unsafe XML in YouTube webhook payload.")
         return
 
     ns = {
