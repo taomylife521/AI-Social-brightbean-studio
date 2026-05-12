@@ -321,6 +321,25 @@ def update_workspace_assignments(org, user, assignments, *, inviter=None):
     )
     current_map = {m.workspace_id: m for m in current}
 
+    # The inviter must also have authority over the *existing* role. Without
+    # this check, a viewer-level admin could silently downgrade an owner by
+    # submitting the form with role="viewer" (request_level <= inviter_level
+    # passes the earlier check; the actual demotion of the owner row is the
+    # privilege violation). Apply to both removal and role-change paths.
+    if inviter is not None:
+        for ws_id, m in current_map.items():
+            existing_level = WS_ROLE_LEVEL.get(m.workspace_role, 0)
+            inviter_level = _inviter_workspace_level(inviter, org, ws_id)
+            if ws_id not in desired:
+                # About to delete this membership entirely.
+                if existing_level > inviter_level:
+                    raise ValueError(
+                        "You cannot remove a workspace membership whose current role is higher than your own."
+                    )
+            elif desired[ws_id] != m.workspace_role and existing_level > inviter_level:
+                # About to change this membership's role.
+                raise ValueError("You cannot modify a workspace membership whose current role is higher than your own.")
+
     # Remove memberships not in desired
     for ws_id, m in current_map.items():
         if ws_id not in desired:

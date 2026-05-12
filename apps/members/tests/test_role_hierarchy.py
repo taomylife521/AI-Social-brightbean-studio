@@ -161,3 +161,73 @@ class UpdateMemberRoleHierarchyTests(TestCase):
         self.assertEqual(response.status_code, 422)
         membership.refresh_from_db()
         self.assertEqual(membership.org_role, "member")
+
+
+class ManageWorkspacesExistingRoleTests(TestCase):
+    """POST /members/<id>/workspaces/ — caller must outrank the *current*
+    workspace role too, otherwise a viewer-level admin could silently demote
+    an owner by submitting role="viewer" (Codex regression test)."""
+
+    def setUp(self):
+        self.org = Organization.objects.create(name="Test Org")
+        self.workspace = Workspace.objects.create(organization=self.org, name="WS")
+        self.admin = _make_user("admin@example.com")
+        self.victim = _make_user("victim@example.com")
+        OrgMembership.objects.create(user=self.admin, organization=self.org, org_role="admin")
+        OrgMembership.objects.create(user=self.victim, organization=self.org, org_role="member")
+        # admin is only a viewer in the workspace; victim is the owner.
+        WorkspaceMembership.objects.create(user=self.admin, workspace=self.workspace, workspace_role="viewer")
+        self.victim_ws_membership = WorkspaceMembership.objects.create(
+            user=self.victim, workspace=self.workspace, workspace_role="owner"
+        )
+        self.victim_org_membership = OrgMembership.objects.get(user=self.victim, organization=self.org)
+
+    def test_viewer_level_admin_cannot_demote_owner_via_workspace_form(self):
+        _login(self.client, self.admin)
+        url = reverse(
+            "members:manage_workspaces",
+            kwargs={"membership_id": self.victim_org_membership.id},
+        )
+        response = self.client.post(
+            url,
+            data={
+                f"ws_{self.workspace.id}": "1",
+                f"ws_role_{self.workspace.id}": "viewer",
+            },
+        )
+        self.assertEqual(response.status_code, 422)
+        self.victim_ws_membership.refresh_from_db()
+        self.assertEqual(self.victim_ws_membership.workspace_role, "owner")
+
+    def test_viewer_level_admin_cannot_remove_owner_via_workspace_form(self):
+        # Unchecking the workspace box deletes the membership — also a state
+        # change the lower-tier caller must not be allowed to perform.
+        _login(self.client, self.admin)
+        url = reverse(
+            "members:manage_workspaces",
+            kwargs={"membership_id": self.victim_org_membership.id},
+        )
+        # No ws_<id> key in POST = "remove this workspace assignment".
+        response = self.client.post(url, data={})
+        self.assertEqual(response.status_code, 422)
+        self.assertTrue(WorkspaceMembership.objects.filter(id=self.victim_ws_membership.id).exists())
+
+    def test_admin_who_is_also_owner_can_change_owner_to_viewer(self):
+        # Sanity: if the admin actually IS owner of the workspace, the demote
+        # path is allowed (peer-level operation).
+        WorkspaceMembership.objects.filter(user=self.admin, workspace=self.workspace).update(workspace_role="owner")
+        _login(self.client, self.admin)
+        url = reverse(
+            "members:manage_workspaces",
+            kwargs={"membership_id": self.victim_org_membership.id},
+        )
+        response = self.client.post(
+            url,
+            data={
+                f"ws_{self.workspace.id}": "1",
+                f"ws_role_{self.workspace.id}": "viewer",
+            },
+        )
+        self.assertLess(response.status_code, 400)
+        self.victim_ws_membership.refresh_from_db()
+        self.assertEqual(self.victim_ws_membership.workspace_role, "viewer")
