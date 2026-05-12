@@ -70,7 +70,7 @@ def resolve_public_ip(url: str) -> str | None:
             if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local or ip.is_multicast:
                 return None
         # Return the first family's IP. Caller will Host-pin against it.
-        return addr_infos[0][4][0]
+        return str(addr_infos[0][4][0])
     except (socket.gaierror, ValueError, OSError):
         return None
 

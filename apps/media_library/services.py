@@ -54,10 +54,21 @@ def create_folder(organization, workspace, name, parent_folder=None):
 
 
 def create_asset(organization, workspace, uploaded_file, uploaded_by, folder=None):
-    """Create a new media asset from an uploaded file."""
+    """Create a new media asset from an uploaded file.
+
+    The stored mime_type is taken from a magic-byte sniff, NOT from the
+    client-supplied Content-Type header — defends against attackers uploading
+    e.g. an SVG/HTML payload labelled as image/jpeg, which on local-storage
+    deployments would be served back with the spoofed type and execute script
+    in the viewer's browser.
+    """
+    from .validators import sniff_mime  # local import to avoid validator import cycle on the test path
+
     file_type, errors = validate_file(uploaded_file)
     if errors:
         raise ValidationError(errors)
+
+    sniffed_mime = sniff_mime(uploaded_file) or ""
 
     asset = MediaAsset(
         organization=organization,
@@ -66,7 +77,7 @@ def create_asset(organization, workspace, uploaded_file, uploaded_by, folder=Non
         filename=uploaded_file.name,
         file=uploaded_file,
         media_type=file_type,
-        mime_type=uploaded_file.content_type or "",
+        mime_type=sniffed_mime,
         file_size=uploaded_file.size,
         uploaded_by=uploaded_by,
         processing_status=MediaAsset.ProcessingStatus.PENDING,

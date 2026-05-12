@@ -4,7 +4,6 @@ import contextlib
 import json
 import re
 import uuid
-import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from urllib.parse import urljoin
 
@@ -2823,8 +2822,45 @@ def _build_event_from_entry(feed, parsed_feed, entry):
     }
 
 
+def _safe_fetch_feed(url, headers, *, timeout=8.0, max_redirects=5):
+    """Fetch *url* with manual redirect handling, re-validating each hop with
+    is_safe_url. Returns (response, final_url) on success or (None, None) on
+    any reject path (initial-URL failed SSRF check, intermediate hop failed
+    SSRF check, broken redirect, transport error).
+    """
+    if not is_safe_url(url):
+        return None, None
+    current_url = url
+    try:
+        response = httpx.get(current_url, headers=headers, timeout=timeout, follow_redirects=False)
+    except httpx.RequestError:
+        return None, None
+    for _ in range(max_redirects):
+        if response.status_code not in (301, 302, 303, 307, 308):
+            return response, current_url
+        location = response.headers.get("Location")
+        if not location:
+            return None, None
+        next_url = urljoin(current_url, location)
+        if not is_safe_url(next_url):
+            return None, None
+        try:
+            response = httpx.get(next_url, headers=headers, timeout=timeout, follow_redirects=False)
+        except httpx.RequestError:
+            return None, None
+        current_url = next_url
+    # Too many redirects.
+    return None, None
+
+
 def _fetch_feed_events_for_workspace(feeds):
-    """Fetch and aggregate recent events across all workspace feeds."""
+    """Fetch and aggregate recent events across all workspace feeds.
+
+    Each feed is re-validated against is_safe_url at fetch time (not just at
+    add time), and redirects are followed manually with per-hop SSRF checks.
+    This closes the DNS-rebind / redirect-bait window that would otherwise
+    let a previously-valid feed URL reach internal hosts on subsequent polls.
+    """
     if not feeds:
         return []
 
@@ -2833,17 +2869,15 @@ def _fetch_feed_events_for_workspace(feeds):
         "User-Agent": "Brightbean RSS Reader/1.0",
     }
     all_events = []
-    with httpx.Client(headers=headers, timeout=8.0, follow_redirects=True) as client:
-        for feed in feeds:
-            with contextlib.suppress(httpx.RequestError):
-                response = client.get(feed.url)
-                if response.status_code >= 400:
-                    continue
-                parsed_feed = _parse_feed_document(response.content)
-                if not parsed_feed:
-                    continue
-                for entry in parsed_feed["entries"][:50]:
-                    all_events.append(_build_event_from_entry(feed, parsed_feed, entry))
+    for feed in feeds:
+        response, _final_url = _safe_fetch_feed(feed.url, headers)
+        if response is None or response.status_code >= 400:
+            continue
+        parsed_feed = _parse_feed_document(response.content)
+        if not parsed_feed:
+            continue
+        for entry in parsed_feed["entries"][:50]:
+            all_events.append(_build_event_from_entry(feed, parsed_feed, entry))
 
     deduped_events = []
     seen = set()
@@ -2934,36 +2968,13 @@ def _render_feeds_tab(
 
 def _validate_rss_url(rss_url):
     """Validate that a URL points to a reachable RSS/Atom XML feed."""
-    if not is_safe_url(rss_url):
-        return False, "Could not reach this URL. Please check the link and try again.", {}
-
     headers = {
         "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.1",
         "User-Agent": "Brightbean RSS Validator/1.0",
     }
-    try:
-        response = httpx.get(rss_url, headers=headers, timeout=8.0, follow_redirects=False)
-    except httpx.RequestError:
+    response, _final_url = _safe_fetch_feed(rss_url, headers)
+    if response is None:
         return False, "Could not reach this URL. Please check the link and try again.", {}
-
-    # Follow up to 5 redirects, resolving relative Locations against the current
-    # request URL and re-validating each absolute hop against is_safe_url to
-    # defend against redirect-based SSRF (e.g. 302 → http://127.0.0.1).
-    current_url = rss_url
-    for _ in range(5):
-        if response.status_code not in (301, 302, 303, 307, 308):
-            break
-        location = response.headers.get("Location")
-        if not location:
-            return False, "Could not reach this URL. Please check the link and try again.", {}
-        next_url = urljoin(current_url, location)
-        if not is_safe_url(next_url):
-            return False, "Could not reach this URL. Please check the link and try again.", {}
-        try:
-            response = httpx.get(next_url, headers=headers, timeout=8.0, follow_redirects=False)
-        except httpx.RequestError:
-            return False, "Could not reach this URL. Please check the link and try again.", {}
-        current_url = next_url
 
     if response.status_code >= 400:
         return False, "This URL could not be loaded as a feed.", {}
