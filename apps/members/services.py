@@ -99,11 +99,14 @@ def create_invitation(org, email, org_role, workspace_assignments, invited_by, *
     requested_org_level = ORG_ROLE_LEVEL.get(org_role, 0)
     if requested_org_level == 0:
         raise ValueError(f"Unknown org role: {org_role!r}.")
-    # Strict inequality on org-role: only owners can grant admin, only admins
-    # can grant member. Blocks lateral admin grants that would let a
-    # compromised admin (eg. via XSS) clone their privileges to an attacker.
-    if requested_org_level >= inviter_org_level:
-        raise ValueError("You cannot invite someone to an organization role at or above your own.")
+    # Strict inequality on org-role, but ONLY for the admin/owner tier:
+    # blocks lateral admin grants (a compromised admin shouldn't be able to
+    # clone their privileges) while still permitting member-tier invites —
+    # which the workspace-manager → client-invite flow relies on, since
+    # those managers are themselves only org-role=member.
+    admin_level = ORG_ROLE_LEVEL[OrgMembership.OrgRole.ADMIN]
+    if requested_org_level >= admin_level and requested_org_level >= inviter_org_level:
+        raise ValueError("Only organization owners can invite someone as an admin.")
 
     # Validate workspace assignments belong to org AND don't exceed inviter's
     # workspace role in that specific workspace.
@@ -271,8 +274,9 @@ def update_member_org_role(org, membership, new_role, *, caller=None):
         existing_level = ORG_ROLE_LEVEL.get(membership.org_role, 0)
         if caller_level < existing_level:
             raise ValueError("You cannot change a member whose role is higher than your own.")
-        if caller_level <= new_level:
-            raise ValueError("You cannot assign a role at or above your own.")
+        admin_level = ORG_ROLE_LEVEL[OrgMembership.OrgRole.ADMIN]
+        if new_level >= admin_level and new_level >= caller_level:
+            raise ValueError("Only organization owners can promote someone to admin.")
 
     if membership.org_role == OrgMembership.OrgRole.OWNER:
         owner_count = OrgMembership.objects.filter(organization=org, org_role=OrgMembership.OrgRole.OWNER).count()
