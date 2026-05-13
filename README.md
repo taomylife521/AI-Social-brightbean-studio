@@ -125,13 +125,9 @@ docker compose exec app python manage.py migrate
 docker compose exec app python manage.py createsuperuser
 ```
 
-Because `docker-compose.yml` bind-mounts the project into `/app`, the Tailwind
-output baked into the image gets shadowed by the host directory on first start.
-Build it once inside the running container so it lands in the bind-mount:
-
-```bash
-docker compose exec app sh -c "cd theme/static_src && npm ci && npm run build"
-```
+Tailwind compiles automatically via the `tailwind` Compose service. First build
+takes ~60–90 seconds (running `npm install` in a fresh container); subsequent
+starts are instant. Watch progress with `docker compose logs -f tailwind`.
 
 Open http://localhost:8000 - you're running.
 
