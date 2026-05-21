@@ -641,7 +641,7 @@
                 <div class="sidebar-nav-item flex items-center gap-2">
                     <div class="relative flex-shrink-0 opacity-60">
                         {% if channel.avatar_url %}
-                        <img src="{{ channel.avatar_url }}" alt="" class="w-7 h-7 rounded-full object-cover grayscale" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                        <img src="{{ channel.avatar_url }}" alt="" class="w-7 h-7 rounded-full object-cover grayscale" x-data @error="$el.style.display='none';$el.nextElementSibling.style.display='flex'">
                         <div class="w-7 h-7 rounded-full bg-stone-200 items-center justify-center text-[11px] font-semibold text-stone-500" style="display:none">{{ channel.account_name|default:channel.account_handle|make_list|first|upper }}</div>
                         {% else %}
                         <div class="w-7 h-7 rounded-full bg-stone-200 flex items-center justify-center text-[11px] font-semibold text-stone-500">{{ channel.account_name|default:channel.account_handle|make_list|first|upper }}</div>

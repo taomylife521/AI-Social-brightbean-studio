@@ -29,8 +29,8 @@ Shows all scheduled platform posts grouped by date. Loaded via HTMX into #tab-co
                 </div>
 
                 <!-- Right: post card -->
-                <div class="flex-1 bg-white rounded-xl border border-stone-200 hover:border-stone-300 transition-colors group">
-                    <div class="p-4 cursor-pointer" onclick="window.location='{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}'">
+                <div x-data class="flex-1 bg-white rounded-xl border border-stone-200 hover:border-stone-300 transition-colors group">
+                    <div class="p-4 cursor-pointer" @click="window.location='{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}'">
                         <!-- Channel info -->
                         <div class="flex items-center gap-2 mb-2">
                             <span class="w-6 h-6 rounded-md flex items-center justify-center">

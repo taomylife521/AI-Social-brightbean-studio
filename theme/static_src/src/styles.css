@@ -295,6 +295,21 @@ img.sidebar-logo-mark {
   opacity: 0.9;
 }
 
+.btn-text-hover-primary {
+  transition: color var(--dur-fast) ease;
+}
+.btn-text-hover-primary:hover {
+  color: var(--text-primary) !important;
+}
+
+.btn-icon-hover {
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.btn-icon-hover:hover {
+  background: var(--surface-2) !important;
+  color: var(--text-primary) !important;
+}
+
 .btn-surface-neutral-50 {
   transition: background var(--dur-fast) ease;
 }
