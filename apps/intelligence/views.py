@@ -536,18 +536,52 @@ def recover(request, org_id):
 
     session_id = pending["stripe_session_id"]
     # Fabricate a local attempt row so the two-phase logic finds it.
-    attempt, _ = StudioCheckoutAttempt.objects.update_or_create(
-        organization=request.org,
-        defaults={
-            "user": request.user,
-            "plan_slug": "",
-            "billing_email": request.org.billing_email or request.user.email,
-            "status": StudioCheckoutAttempt.Status.OPEN,
-            "stripe_session_id": session_id,
-            "checkout_url": "",
-            "idempotency_key": f"recover-{request.org.id}",
-        },
-    )
+    # NOTE: ``update_or_create(organization=...)`` would raise
+    # MultipleObjectsReturned for any org with checkout history —
+    # StudioCheckoutAttempt's partial-unique index only covers
+    # creating|open|pending, so terminal rows accumulate. Look up by
+    # (organization, stripe_session_id) instead (Stripe session ids are
+    # globally unique), then fall back to a fresh create with a
+    # defensive sweep of any non-terminal row that would conflict with
+    # the partial-unique index.
+    attempt = StudioCheckoutAttempt.objects.filter(
+        organization=request.org, stripe_session_id=session_id,
+    ).first()
+    open_defaults = {
+        "user": request.user,
+        "plan_slug": "",
+        "billing_email": request.org.billing_email or request.user.email,
+        "status": StudioCheckoutAttempt.Status.OPEN,
+        "checkout_url": "",
+        "idempotency_key": f"recover-{request.org.id}",
+    }
+    if attempt is not None:
+        for field, value in open_defaults.items():
+            setattr(attempt, field, value)
+        attempt.save(update_fields=list(open_defaults) + ["updated_at"])
+    else:
+        with transaction.atomic():
+            # An unrelated non-terminal attempt (e.g. an abandoned
+            # ``creating`` row from a previous failed checkout) would
+            # collide with the partial-unique index. Expire it so this
+            # recovery can proceed; audit trail preserved via the row,
+            # not deleted.
+            StudioCheckoutAttempt.objects.filter(
+                organization=request.org,
+                status__in=[
+                    StudioCheckoutAttempt.Status.CREATING,
+                    StudioCheckoutAttempt.Status.OPEN,
+                    StudioCheckoutAttempt.Status.PENDING,
+                ],
+            ).update(
+                status=StudioCheckoutAttempt.Status.EXPIRED,
+                consumed_at=timezone.now(),
+            )
+            attempt = StudioCheckoutAttempt.objects.create(
+                organization=request.org,
+                stripe_session_id=session_id,
+                **open_defaults,
+            )
     try:
         return _activate_two_phase(
             request, session_id=session_id, attempt=attempt,
