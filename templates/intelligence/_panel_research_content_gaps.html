@@ -21,12 +21,20 @@
                     {{ content_gap_niches|json_script:"cg-niche-data" }}
                     <div id="cg-niche-combobox" class="relative">
                         <input type="hidden" name="niche" id="cg-niche" required>
+                        {# The trigger reuses .intel-input for chrome (border,
+                           padding, hover, focus ring) but .intel-input sets
+                           ``display: block`` which would push the chevron
+                           below the label on its own line. Inline-style the
+                           flex layout so the label + chevron sit on one row
+                           regardless of when .intel-input is parsed relative
+                           to the Tailwind ``flex`` utility. #}
                         <button type="button" id="cg-niche-trigger"
                                 role="combobox"
                                 aria-haspopup="listbox"
                                 aria-expanded="false"
                                 aria-controls="cg-niche-listbox"
-                                class="intel-input flex w-full items-center justify-between gap-2 text-left">
+                                class="intel-input w-full text-left"
+                                style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;">
                             <span class="cg-niche-label truncate text-stone-400">Choose a niche…</span>
                             <svg class="cg-niche-chevron h-4 w-4 flex-shrink-0 text-stone-400 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/>
