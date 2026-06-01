@@ -307,6 +307,25 @@ MEDIA_LIBRARY_THUMBNAIL_SIZE = (400, 400)
 MEDIA_LIBRARY_FFMPEG_TIMEOUT = 300  # 5 minutes
 MEDIA_LIBRARY_MAX_CONCURRENT_TRANSCODES = 2
 
+# Storage quota — bounds the total bytes a single Organization can
+# accumulate in the media library. Without this, an Agent API key with
+# ``upload_media`` permission could fill the bucket unbounded.
+#
+# Resolution order at runtime (high → low precedence):
+#   1. OrgSetting ``media.storage_quota_bytes_override`` (manual support
+#      exception or enterprise contract).
+#   2. ``STORAGE_QUOTA_TIERS[IntelligenceSubscription.plan_slug]``.
+#   3. ``STORAGE_QUOTA_DEFAULT``.
+# See ``apps.media_library.quotas.resolve_storage_quota``.
+STORAGE_QUOTA_ENABLED = env.bool("STORAGE_QUOTA_ENABLED", default=True)
+STORAGE_QUOTA_TIERS = {
+    # plan_slug → bytes. Slugs must match values produced by Intelligence.
+    "hobby": 5 * 1024**3,  # 5 GB
+    "creator": 50 * 1024**3,  # 50 GB
+    "agency": 500 * 1024**3,  # 500 GB
+}
+STORAGE_QUOTA_DEFAULT = 5 * 1024**3  # 5 GB fallback for orgs without an active subscription
+
 # Encryption key derivation salt - MUST be set per-deployment via environment
 ENCRYPTION_KEY_SALT = env("ENCRYPTION_KEY_SALT", default="").encode("utf-8") or None
 

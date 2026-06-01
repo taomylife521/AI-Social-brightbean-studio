@@ -35,7 +35,6 @@ from apps.api.middleware import (
 )
 from apps.api.schemas import (
     CreatePostRequest,
-    PlatformPostSummary,
     PostResponse,
     ScheduleRequest,
     UpdatePostRequest,
@@ -83,31 +82,7 @@ def _resolve_account(request: HttpRequest, social_account_id: uuid.UUID) -> Soci
 
 
 def _post_to_response(post: Post) -> PostResponse:
-    platform_posts = [
-        PlatformPostSummary(
-            id=pp.id,
-            social_account_id=pp.social_account_id,
-            platform=pp.social_account.platform,
-            status=pp.status,
-            scheduled_at=pp.scheduled_at,
-            published_at=pp.published_at,
-            platform_post_id=pp.platform_post_id or "",
-        )
-        for pp in post.platform_posts.select_related("social_account")
-    ]
-    return PostResponse(
-        id=post.id,
-        workspace_id=post.workspace_id,
-        title=post.title,
-        caption=post.caption,
-        first_comment=post.first_comment,
-        scheduled_at=post.scheduled_at,
-        published_at=post.published_at,
-        status=post.status,
-        platform_posts=platform_posts,
-        created_at=post.created_at,
-        updated_at=post.updated_at,
-    )
+    return PostResponse.from_post(post)
 
 
 def _get_workspace_post(request: HttpRequest, post_id: uuid.UUID) -> Post:
@@ -171,6 +146,27 @@ def create(request, payload: CreatePostRequest):
     social_account = _resolve_account(request, payload.social_account_id)
     if payload.action == "schedule" and payload.scheduled_at is None:
         raise HttpError(422, "scheduled_at is required when action='schedule'.")
+
+    # Build the platform_overrides dict and validate that each override's
+    # social_account_id matches one of the post's target accounts. In the
+    # current single-account API that's only ``payload.social_account_id``;
+    # anything else would silently no-op at publish time, so we reject up
+    # front. The plan's [Gap 2] section calls this out explicitly.
+    platform_overrides: dict = {}
+    for ov in payload.platform_overrides:
+        if ov.social_account_id != payload.social_account_id:
+            raise HttpError(
+                422,
+                (
+                    f"platform_overrides[*].social_account_id must match the post's "
+                    f"social_account_id ({payload.social_account_id}); got {ov.social_account_id}."
+                ),
+            )
+        platform_overrides[ov.social_account_id] = {
+            "title": ov.title,
+            "caption": ov.caption,
+            "first_comment": ov.first_comment,
+        }
 
     # ---- Atomic claim-first idempotency. Three early-out branches
     # before we do *any* mutating work, so concurrent identical retries
@@ -238,6 +234,7 @@ def create(request, payload: CreatePostRequest):
             scheduled_at=payload.scheduled_at,
             author=request.user if not request.user.is_anonymous else None,
             status="scheduled" if payload.action == "schedule" else "draft",
+            platform_overrides=platform_overrides,
         )
         body = _post_to_response(post)
         status_code = 201

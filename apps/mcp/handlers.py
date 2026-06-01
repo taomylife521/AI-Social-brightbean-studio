@@ -22,6 +22,7 @@ from uuid import UUID
 from ninja.errors import HttpError
 
 from apps.api.limits import check_platform_quota
+from apps.api.schemas import PostResponse
 from apps.composer.models import Post
 from apps.composer.services import create_post, transition_platform_post
 from apps.mcp.protocol import INVALID_PARAMS, JsonRpcError
@@ -75,27 +76,12 @@ def _resolve_allowed_account(api_key, social_account_id_str: str) -> SocialAccou
 
 
 def _serialize_post(post: Post) -> dict:
-    return {
-        "id": str(post.id),
-        "workspace_id": str(post.workspace_id),
-        "title": post.title,
-        "caption": post.caption,
-        "first_comment": post.first_comment,
-        "scheduled_at": post.scheduled_at.isoformat() if post.scheduled_at else None,
-        "published_at": post.published_at.isoformat() if post.published_at else None,
-        "status": post.status,
-        "platform_posts": [
-            {
-                "id": str(pp.id),
-                "social_account_id": str(pp.social_account_id),
-                "platform": pp.social_account.platform,
-                "status": pp.status,
-                "scheduled_at": pp.scheduled_at.isoformat() if pp.scheduled_at else None,
-                "published_at": pp.published_at.isoformat() if pp.published_at else None,
-            }
-            for pp in post.platform_posts.select_related("social_account")
-        ],
-    }
+    """Serialize a Post for an MCP tool response.
+
+    Delegates to the same Pydantic schema the REST router returns so
+    the two surfaces cannot drift in either field set or wire format.
+    """
+    return PostResponse.from_post(post).model_dump(mode="json")
 
 
 def _get_post_for_key(api_key, post_id_str: str) -> Post:
@@ -137,14 +123,11 @@ def _parse_iso_datetime(value: Any, field_name: str) -> datetime:
 
 def _list_accounts(args: dict, context: dict[str, Any]) -> dict:
     api_key = context["api_key"]
+    # Reuse the REST schema so MCP and REST stay byte-identical (Gap 4 + 5).
+    from apps.api.schemas import AccountSummary
+
     accounts = [
-        {
-            "id": str(sa.id),
-            "platform": sa.platform,
-            "account_name": sa.account_name,
-            "account_handle": getattr(sa, "account_handle", "") or "",
-            "connection_status": sa.connection_status,
-        }
+        AccountSummary.from_social_account(sa).model_dump(mode="json")
         for sa in api_key.social_accounts.all()
     ]
     return _wrap_text({"accounts": accounts})
@@ -155,8 +138,9 @@ register_tool(
         name="list_accounts",
         description=(
             "List the social media accounts this API key is allowed to act on. "
-            "Returns id, platform, account_name, account_handle, and connection_status. "
-            "Call this first to discover which social_account_id values are valid for other tools."
+            "Returns id, platform, account_name, account_handle, connection_status, char_limit, "
+            "needs_title, and supports_first_comment. Call this first to discover which "
+            "social_account_id values are valid and what each platform requires."
         ),
         input_schema={"type": "object", "properties": {}, "additionalProperties": False},
         handler=_list_accounts,
@@ -474,5 +458,265 @@ register_tool(
             "additionalProperties": False,
         },
         handler=_schedule_draft,
+    )
+)
+
+
+# ---------------------------------------------------------------------------
+# Media tools: search_media, get_media, upload_media (Gap 1 + 1b)
+# ---------------------------------------------------------------------------
+
+
+_MCP_MEDIA_LIMIT_DEFAULT = 20
+_MCP_MEDIA_LIMIT_MAX = 100
+# JSON-RPC payload sanity cap. Kept below Django's DATA_UPLOAD_MAX_MEMORY_SIZE
+# default of 2.5 MB so this check fires with a structured JSON-RPC error
+# before Django's RequestDataTooBig fires with an opaque HTML 500.
+# For anything larger, agents must use POST /api/v1/media/ over REST.
+_MCP_UPLOAD_MAX_BYTES = 1024 * 1024  # 1 MB raw
+
+
+def _visible_media_qs(api_key):
+    from apps.media_library.models import MediaAsset
+
+    workspace = api_key.workspace
+    return MediaAsset.objects.for_workspace_with_shared(
+        workspace_id=workspace.id,
+        organization_id=workspace.organization_id,
+    )
+
+
+def _serialize_media(asset) -> dict:
+    """Return the same shape as ``GET /api/v1/media/{id}``."""
+    from apps.api.schemas import MediaAssetResponse
+
+    return MediaAssetResponse.from_asset(
+        asset, last_used_at=getattr(asset, "last_used_at", None)
+    ).model_dump(mode="json")
+
+
+def _search_media(args: dict, context: dict[str, Any]) -> dict:
+    from apps.media_library.models import MediaAsset
+
+    api_key = context["api_key"]
+    query = args.get("query") or None
+    media_type = args.get("media_type") or None
+    tags = args.get("tags") or []
+    folder_id_raw = args.get("folder_id") or None
+    is_starred = args.get("is_starred")
+    limit = int(args.get("limit") or _MCP_MEDIA_LIMIT_DEFAULT)
+    if limit < 1 or limit > _MCP_MEDIA_LIMIT_MAX:
+        raise JsonRpcError(INVALID_PARAMS, f"limit must be between 1 and {_MCP_MEDIA_LIMIT_MAX}")
+
+    qs = MediaAsset.objects.with_last_used_at(_visible_media_qs(api_key))
+    # Default to ``completed`` so agents never reference half-processed
+    # assets via MCP. Mirrors the REST default.
+    qs = qs.filter(processing_status="completed")
+    if media_type:
+        qs = qs.filter(media_type=media_type)
+    if folder_id_raw:
+        qs = qs.filter(folder_id=_parse_uuid(folder_id_raw, "folder_id"))
+    if is_starred is not None:
+        qs = qs.filter(is_starred=bool(is_starred))
+    if isinstance(tags, list):
+        for tag in tags:
+            if not isinstance(tag, str):
+                raise JsonRpcError(INVALID_PARAMS, "tags must be a list of strings")
+            qs = qs.filter(tags__contains=[tag])
+    if query:
+        qs = MediaAsset.objects.search(query, queryset=qs)
+
+    qs = qs.order_by("-created_at", "id")[:limit]
+    return _wrap_text({"items": [_serialize_media(a) for a in qs]})
+
+
+register_tool(
+    Tool(
+        name="search_media",
+        description=(
+            "Find media assets already uploaded to this workspace. Defaults to the 20 most "
+            "recent assets that are ready to reference. Use this before uploading to avoid "
+            "duplicating evergreen content. Returns the same item shape as GET /api/v1/media/."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Optional substring match on filename and tags.",
+                },
+                "media_type": {
+                    "type": "string",
+                    "enum": ["image", "video", "gif", "document"],
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "All tags must match (AND semantics).",
+                },
+                "folder_id": {"type": "string", "format": "uuid"},
+                "is_starred": {"type": "boolean"},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": _MCP_MEDIA_LIMIT_MAX,
+                    "default": _MCP_MEDIA_LIMIT_DEFAULT,
+                },
+            },
+            "additionalProperties": False,
+        },
+        handler=_search_media,
+    )
+)
+
+
+def _get_media(args: dict, context: dict[str, Any]) -> dict:
+    from apps.media_library.models import MediaAsset
+
+    if "media_id" not in args:
+        raise JsonRpcError(INVALID_PARAMS, "media_id is required")
+    media_id = _parse_uuid(args["media_id"], "media_id")
+    api_key = context["api_key"]
+    qs = MediaAsset.objects.with_last_used_at(_visible_media_qs(api_key))
+    try:
+        asset = qs.get(id=media_id)
+    except MediaAsset.DoesNotExist as exc:
+        raise JsonRpcError(INVALID_PARAMS, "Media asset not found") from exc
+    return _wrap_text(_serialize_media(asset))
+
+
+register_tool(
+    Tool(
+        name="get_media",
+        description=(
+            "Retrieve a single media asset by id. Same response shape as "
+            "GET /api/v1/media/{id}. Use this to poll an upload's processing_status "
+            "until it transitions from 'pending' to 'completed'."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {"media_id": {"type": "string", "format": "uuid"}},
+            "required": ["media_id"],
+            "additionalProperties": False,
+        },
+        handler=_get_media,
+    )
+)
+
+
+def _upload_media(args: dict, context: dict[str, Any]) -> dict:
+    """MCP-side upload accepts base64 content (≤5 MB).
+
+    For larger files agents must use ``POST /api/v1/media/`` over REST —
+    multipart can't ride a JSON-RPC envelope cleanly.
+    """
+    import base64
+
+    from django.core.exceptions import ValidationError
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    from apps.media_library.quotas import StorageQuotaExceededError
+    from apps.media_library.services import create_asset as media_create_asset
+
+    _require_perm(context, "upload_media")
+    if "filename" not in args:
+        raise JsonRpcError(INVALID_PARAMS, "filename is required")
+    if "content_base64" not in args:
+        raise JsonRpcError(INVALID_PARAMS, "content_base64 is required")
+
+    filename = args["filename"]
+    if not isinstance(filename, str) or not filename.strip():
+        raise JsonRpcError(INVALID_PARAMS, "filename must be a non-empty string")
+
+    try:
+        raw = base64.b64decode(args["content_base64"], validate=True)
+    except (ValueError, base64.binascii.Error) as exc:
+        raise JsonRpcError(INVALID_PARAMS, "content_base64 is not valid base64") from exc
+
+    if len(raw) > _MCP_UPLOAD_MAX_BYTES:
+        raise JsonRpcError(
+            INVALID_PARAMS,
+            (
+                f"MCP upload limit is {_MCP_UPLOAD_MAX_BYTES // 1024 // 1024} MB. "
+                "Use POST /api/v1/media/ (multipart) for larger files."
+            ),
+        )
+
+    content_type = args.get("content_type") or "application/octet-stream"
+    uploaded = SimpleUploadedFile(name=filename, content=raw, content_type=content_type)
+
+    api_key = context["api_key"]
+    workspace = api_key.workspace
+    folder = None
+    folder_id_raw = args.get("folder_id")
+    if folder_id_raw:
+        from apps.media_library.models import MediaFolder
+
+        try:
+            folder = MediaFolder.objects.get(
+                id=_parse_uuid(folder_id_raw, "folder_id"),
+                organization=workspace.organization,
+            )
+        except MediaFolder.DoesNotExist as exc:
+            raise JsonRpcError(INVALID_PARAMS, "folder_id not found in this organization") from exc
+
+    tags = args.get("tags") or []
+    if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+        raise JsonRpcError(INVALID_PARAMS, "tags must be a list of strings")
+
+    try:
+        asset = media_create_asset(
+            organization=workspace.organization,
+            workspace=workspace,
+            uploaded_file=uploaded,
+            uploaded_by=api_key.issued_by if api_key.issued_by_id else None,
+            folder=folder,
+            alt_text=args.get("alt_text", "") or "",
+            title=args.get("title", "") or "",
+            tags=tags,
+        )
+    except StorageQuotaExceededError as exc:
+        raise JsonRpcError(
+            INVALID_PARAMS,
+            f"Storage quota exceeded: used={exc.used} limit={exc.limit} attempted={exc.attempted}",
+        ) from exc
+    except ValidationError as exc:
+        raise JsonRpcError(INVALID_PARAMS, "; ".join(getattr(exc, "messages", [str(exc)]))) from exc
+
+    from apps.media_library.tasks import process_media_asset
+
+    process_media_asset(str(asset.id))
+
+    return _wrap_text(_serialize_media(asset))
+
+
+register_tool(
+    Tool(
+        name="upload_media",
+        description=(
+            "Upload a small media file (≤1 MB raw / ~1.3 MB base64) via base64. "
+            "For anything larger use POST /api/v1/media/ over REST instead — multipart "
+            "can't ride a JSON-RPC envelope. Returns the same shape as the REST upload "
+            "response; processing_status starts at 'pending' until the background task "
+            "transitions it to 'completed'."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "filename": {"type": "string", "maxLength": 255},
+                "content_base64": {
+                    "type": "string",
+                    "description": "Base64-encoded file content. Decoded size must be ≤5 MB.",
+                },
+                "content_type": {"type": "string"},
+                "alt_text": {"type": "string", "maxLength": 2000},
+                "title": {"type": "string", "maxLength": 255},
+                "folder_id": {"type": "string", "format": "uuid"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["filename", "content_base64"],
+            "additionalProperties": False,
+        },
+        handler=_upload_media,
     )
 )

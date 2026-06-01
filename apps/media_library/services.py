@@ -53,7 +53,17 @@ def create_folder(organization, workspace, name, parent_folder=None):
     return folder
 
 
-def create_asset(organization, workspace, uploaded_file, uploaded_by, folder=None):
+def create_asset(
+    organization,
+    workspace,
+    uploaded_file,
+    uploaded_by,
+    folder=None,
+    *,
+    alt_text: str = "",
+    title: str = "",
+    tags: list[str] | None = None,
+):
     """Create a new media asset from an uploaded file.
 
     The stored mime_type is taken from a magic-byte sniff, NOT from the
@@ -61,12 +71,19 @@ def create_asset(organization, workspace, uploaded_file, uploaded_by, folder=Non
     e.g. an SVG/HTML payload labelled as image/jpeg, which on local-storage
     deployments would be served back with the spoofed type and execute script
     in the viewer's browser.
+
+    Enforces the org-level storage quota before persisting; raises
+    ``StorageQuotaExceededError`` (mapped to HTTP 413 by the API layer) when
+    the upload would push usage over the cap.
     """
+    from .quotas import enforce_storage_quota
     from .validators import sniff_mime  # local import to avoid validator import cycle on the test path
 
     file_type, errors = validate_file(uploaded_file)
     if errors:
         raise ValidationError(errors)
+
+    enforce_storage_quota(organization, getattr(uploaded_file, "size", 0) or 0)
 
     sniffed_mime = sniff_mime(uploaded_file) or ""
 
@@ -81,6 +98,9 @@ def create_asset(organization, workspace, uploaded_file, uploaded_by, folder=Non
         file_size=uploaded_file.size,
         uploaded_by=uploaded_by,
         processing_status=MediaAsset.ProcessingStatus.PENDING,
+        alt_text=alt_text or "",
+        title=title or "",
+        tags=list(tags) if tags else [],
     )
     asset.save()
     return asset

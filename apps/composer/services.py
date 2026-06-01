@@ -62,6 +62,7 @@ def create_post(
     scheduled_at: dt.datetime | None = None,
     author=None,
     status: str = "draft",
+    platform_overrides: dict[Any, dict[str, str | None]] | None = None,
 ):
     """Create a ``Post`` + one ``PlatformPost`` for ``social_account``.
 
@@ -131,6 +132,8 @@ def create_post(
         if missing:
             raise ValueError(f"Media asset(s) not found in workspace {workspace.id}: {missing}")
 
+    override = (platform_overrides or {}).get(social_account.id) or {}
+
     with transaction.atomic():
         post = Post.objects.create(
             workspace=workspace,
@@ -140,11 +143,18 @@ def create_post(
             first_comment=first_comment,
             scheduled_at=scheduled_at if status == "scheduled" else None,
         )
+        # Each override field is independent: ``None`` (or omitted)
+        # means "no platform-specific override; fall back to the post
+        # value via ``PlatformPost.effective_*``". Any string —
+        # including ``""`` — is treated as an explicit override.
         PlatformPost.objects.create(
             post=post,
             social_account=social_account,
             status=status,
             scheduled_at=scheduled_at if status == "scheduled" else None,
+            platform_specific_title=override.get("title"),
+            platform_specific_caption=override.get("caption"),
+            platform_specific_first_comment=override.get("first_comment"),
         )
         for position, mid in enumerate(media_ids):
             PostMedia.objects.create(
