@@ -4,30 +4,54 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('social_accounts', '0008_socialaccount_daily_post_limit_override'),
+        ("social_accounts", "0008_socialaccount_daily_post_limit_override"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='AnalyticsPlatformConfig',
+            name="AnalyticsPlatformConfig",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('platform', models.CharField(choices=[('facebook', 'Facebook'), ('instagram', 'Instagram'), ('instagram_login', 'Instagram (Direct)'), ('linkedin_personal', 'LinkedIn (Personal Profile)'), ('linkedin_company', 'LinkedIn (Company Page)'), ('tiktok', 'TikTok'), ('youtube', 'YouTube'), ('pinterest', 'Pinterest'), ('threads', 'Threads'), ('bluesky', 'Bluesky'), ('google_business', 'Google Business Profile'), ('mastodon', 'Mastodon')], max_length=30, unique=True)),
-                ('is_enabled', models.BooleanField(default=True, help_text='If unchecked, this platform is excluded from the Analytics feature.')),
-                ('updated_at', models.DateTimeField(auto_now=True)),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                (
+                    "platform",
+                    models.CharField(
+                        choices=[
+                            ("facebook", "Facebook"),
+                            ("instagram", "Instagram"),
+                            ("instagram_login", "Instagram (Direct)"),
+                            ("linkedin_personal", "LinkedIn (Personal Profile)"),
+                            ("linkedin_company", "LinkedIn (Company Page)"),
+                            ("tiktok", "TikTok"),
+                            ("youtube", "YouTube"),
+                            ("pinterest", "Pinterest"),
+                            ("threads", "Threads"),
+                            ("bluesky", "Bluesky"),
+                            ("google_business", "Google Business Profile"),
+                            ("mastodon", "Mastodon"),
+                        ],
+                        max_length=30,
+                        unique=True,
+                    ),
+                ),
+                (
+                    "is_enabled",
+                    models.BooleanField(
+                        default=True, help_text="If unchecked, this platform is excluded from the Analytics feature."
+                    ),
+                ),
+                ("updated_at", models.DateTimeField(auto_now=True)),
             ],
             options={
-                'verbose_name': 'Analytics platform',
-                'verbose_name_plural': 'Analytics platforms',
-                'db_table': 'social_accounts_analytics_platform_config',
-                'ordering': ['platform'],
+                "verbose_name": "Analytics platform",
+                "verbose_name_plural": "Analytics platforms",
+                "db_table": "social_accounts_analytics_platform_config",
+                "ordering": ["platform"],
             },
         ),
         migrations.AddField(
-            model_name='socialaccount',
-            name='analytics_needs_reconnect',
+            model_name="socialaccount",
+            name="analytics_needs_reconnect",
             field=models.BooleanField(default=False),
         ),
     ]

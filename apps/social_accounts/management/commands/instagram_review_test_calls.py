@@ -91,9 +91,7 @@ class Command(BaseCommand):
             )
             raise CommandError("Account is not in CONNECTED status. Reconnect via /social-accounts/connect/ first.")
 
-        self.stdout.write(
-            f"Running App Review test calls for {account.account_name} (@{account.account_handle})…\n"
-        )
+        self.stdout.write(f"Running App Review test calls for {account.account_name} (@{account.account_handle})…\n")
 
         provider = _resolve_provider(account)
         token = account.oauth_access_token
@@ -114,9 +112,7 @@ class Command(BaseCommand):
         media_id = result.platform_post_id
         permalink = result.url or f"https://www.instagram.com/p/{media_id}/"
         self.stdout.write(
-            self.style.SUCCESS(
-                f"  ✓ instagram_business_content_publish — media_id={media_id}  permalink={permalink}"
-            )
+            self.style.SUCCESS(f"  ✓ instagram_business_content_publish — media_id={media_id}  permalink={permalink}")
         )
 
         # ------------------------------------------------------------------
@@ -170,6 +166,4 @@ class Command(BaseCommand):
             "Check the Meta App Review dashboard — the touched permissions should flip to 'API call verified' "
             "within a minute or two."
         )
-        self.stdout.write(
-            f"You may want to delete the test post manually from Instagram: {permalink}"
-        )
+        self.stdout.write(f"You may want to delete the test post manually from Instagram: {permalink}")

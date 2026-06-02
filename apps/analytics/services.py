@@ -267,9 +267,8 @@ def _latest_post_stats(posts: Iterable[PlatformPost], metrics: list[str]) -> dic
     post_ids = [p.id for p in posts]
     if not post_ids:
         return {}
-    rows = (
-        PostInsightsSnapshot.objects.filter(platform_post_id__in=post_ids, metric_key__in=metrics)
-        .order_by("platform_post_id", "metric_key", "-date")
+    rows = PostInsightsSnapshot.objects.filter(platform_post_id__in=post_ids, metric_key__in=metrics).order_by(
+        "platform_post_id", "metric_key", "-date"
     )
     out: dict[Any, dict[str, float]] = defaultdict(dict)
     seen: set[tuple[Any, str]] = set()
@@ -284,7 +283,9 @@ def _latest_post_stats(posts: Iterable[PlatformPost], metrics: list[str]) -> dic
 
 def _post_sparklines(post: PlatformPost, metrics: list[str]) -> dict[str, list[float]]:
     """Daily history per metric since publish — for the detail-drawer sparkline."""
-    rows = PostInsightsSnapshot.objects.filter(platform_post=post, metric_key__in=metrics).order_by("metric_key", "date")
+    rows = PostInsightsSnapshot.objects.filter(platform_post=post, metric_key__in=metrics).order_by(
+        "metric_key", "date"
+    )
     out: dict[str, list[float]] = defaultdict(list)
     for r in rows:
         out[r.metric_key].append(r.value)
