@@ -13,7 +13,7 @@
 
     <div style="width: 1px; background: var(--neutral-100); align-self: stretch;"></div>
 
-    <div style="flex: 1 1 180px; display: flex; flex-direction: column; gap: 8px; justify-content: center;">
+    <div style="flex: 1 1 215px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; align-content: center;">
         {% for p in engagement.parts %}
         <div style="padding: 11px 13px; border-radius: var(--radius-lg); background: var(--surface-1); border: 1px solid var(--border);">
             <div style="font-size: 0.6875rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">{{ p.label }}</div>
