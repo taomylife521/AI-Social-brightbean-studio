@@ -22,6 +22,7 @@ from apps.social_accounts.models import AnalyticsPlatformConfig, SocialAccount
 from apps.workspaces.models import Workspace
 
 from . import services
+from .constants import NO_ANALYTICS_PLATFORMS
 from .metrics import PLATFORM_COLOR, PLATFORM_PRIMARY
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,7 @@ def analytics_account(request: HttpRequest, workspace_id, account_id) -> HttpRes
 
     has_snapshots = AccountInsightsSnapshot.objects.filter(social_account=account).exists()
     is_fresh = not has_any_post and not has_snapshots
+    analytics_unavailable = account.platform in NO_ANALYTICS_PLATFORMS
 
     context: dict = {
         "workspace": workspace,
@@ -137,7 +139,28 @@ def analytics_account(request: HttpRequest, workspace_id, account_id) -> HttpRes
         "platform_color": PLATFORM_COLOR.get(account.platform, "var(--primary)"),
         "is_fresh": is_fresh,
         "analytics_needs_reconnect": account.analytics_needs_reconnect,
+        "analytics_unavailable": analytics_unavailable,
+        "analytics_unavailable_notice": NO_ANALYTICS_PLATFORMS.get(account.platform, ""),
     }
+
+    if analytics_unavailable:
+        table = services.all_posts_for(
+            account,
+            days_filter=_parse_days_filter(request.GET.get("table_range")),
+            sort_key="date",
+            sort_dir=request.GET.get("dir", "desc"),
+            type_filter=request.GET.get("type", "all"),
+            page=_parse_page(request.GET.get("page")),
+        )
+        # Strip metric columns — they'd all be 0 and contradict the
+        # "analytics aren't available" notice above the table.
+        table["metric_labels"] = []
+        context["table"] = table
+        if request.headers.get("HX-Request") and request.GET.get("partial") == "table":
+            return render(request, "analytics/_post_table.html", context)
+        if request.headers.get("HX-Request") and request.GET.get("partial") == "page":
+            return render(request, "analytics/_page.html", context)
+        return render(request, "analytics/index.html", context)
 
     if is_fresh:
         return render(request, "analytics/index.html", context)
@@ -183,7 +206,9 @@ def post_detail(request: HttpRequest, workspace_id, post_id) -> HttpResponse:
     """HTMX-loaded payload for the slide-over post-detail drawer."""
     workspace = _get_workspace(request, workspace_id)
     post = get_object_or_404(
-        PlatformPost.objects.select_related("social_account", "post"),
+        PlatformPost.objects.select_related("social_account", "post").prefetch_related(
+            "post__media_attachments__media_asset"
+        ),
         id=post_id,
         social_account__workspace=workspace,
     )

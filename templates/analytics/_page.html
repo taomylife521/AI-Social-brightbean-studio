@@ -16,7 +16,17 @@
 </div>
 {% endif %}
 
-{% if is_fresh %}
+{% if analytics_unavailable %}
+    {% include "analytics/_no_analytics_state.html" %}
+    {% if table.total %}
+        <div class="a-card" style="margin-top: 20px;">
+            <div style="padding: 16px 20px; border-bottom: 1px solid var(--neutral-100);">
+                <h3 style="font-size: 0.9375rem; font-weight: 600; color: var(--text-primary);">All posts</h3>
+            </div>
+            {% include "analytics/_post_table.html" %}
+        </div>
+    {% endif %}
+{% elif is_fresh %}
     {% include "analytics/_empty_state.html" %}
 {% else %}
     <div style="display: flex; flex-direction: column; gap: 20px;">
