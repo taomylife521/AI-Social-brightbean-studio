@@ -46,7 +46,12 @@ from apps.workspaces.models import Workspace
 # Permission keys defined in the registry but intentionally hidden from
 # API-key issuance until the feature they gate ships. Stored API keys may
 # still carry these strings; they just don't appear in the picker.
-_HIDDEN_FROM_ISSUANCE = {"view_analytics"}
+#
+# ``view_analytics`` has now shipped (the ``/api/v1/analytics/*`` REST
+# routes and the ``get_*_analytics`` MCP tools gate on it), so it's
+# grantable again — the set is empty until the next pre-ship permission
+# lands.
+_HIDDEN_FROM_ISSUANCE: set[str] = set()
 
 # ---------------------------------------------------------------------------
 # Authorization decorator
@@ -103,6 +108,11 @@ def list_keys(request):
     # Surface a "Show N revoked" toggle only when there's actually something
     # behind it — avoids a noisy control on an org that's never revoked a key.
     revoked_count = ApiKey.objects.filter(workspace__organization=org, revoked_at__isnull=False).count()
+    # One-time token reveal handed off from ``issue_key`` via the session
+    # (Post/Redirect/Get). Pop it so it shows exactly once — a reload of
+    # this page finds nothing and the modal stays closed.
+    reveal_token = request.session.pop("reveal_token", None)
+    reveal_key_name = request.session.pop("reveal_key_name", None)
     context = {
         "settings_active": "api_keys",
         "rows": rows,
@@ -111,6 +121,8 @@ def list_keys(request):
         # Empty issuance form context — the modal renders inside the
         # same page so we don't need a separate route.
         "issuance": _initial_issuance_context(org, request.user),
+        "reveal_token": reveal_token,
+        "reveal_key_name": reveal_key_name,
     }
     return render(request, "api_keys/list.html", context)
 
@@ -302,25 +314,20 @@ def issue_key(request):
         messages.error(request, str(exc))
         return redirect("api_keys:list")
 
-    # Render the one-time-reveal modal on top of the list page. We
-    # deliberately do NOT redirect — a redirect (PRG) would drop the
-    # plaintext token via Location header round-trip and break the
-    # "shown exactly once" contract.
-    org = request.org
-    keys = (
-        ApiKey.objects.filter(workspace__organization=org)
-        .select_related("workspace", "issued_by")
-        .prefetch_related("social_accounts")
-        .order_by("-created_at")
-    )
-    context = {
-        "settings_active": "api_keys",
-        "rows": [_row_context(k) for k in keys],
-        "issuance": _initial_issuance_context(org, request.user),
-        "reveal_token": issued.plaintext_token,
-        "reveal_key_name": issued.api_key.name,
-    }
-    return render(request, "api_keys/list.html", context)
+    # Post/Redirect/Get. Stash the one-time token in the session and
+    # redirect to the list, which pops it and renders the reveal modal on
+    # the way through. Rendering the list *directly* from this POST (the
+    # previous behaviour) left the browser sitting on the ``/issue/``
+    # endpoint, so a refresh re-submitted the form and minted a brand-new
+    # key — and re-popped the reveal modal — every time.
+    #
+    # The token never rides the URL/Location header: sessions here are
+    # DB-backed (``SESSION_ENGINE = ...sessions.backends.db``), so only the
+    # opaque session id is in the cookie. ``list_keys`` pops the value, so
+    # it's still shown exactly once and a later reload sees nothing.
+    request.session["reveal_token"] = issued.plaintext_token
+    request.session["reveal_key_name"] = issued.api_key.name
+    return redirect("api_keys:list")
 
 
 # ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ from uuid import UUID
 
 from ninja.errors import HttpError
 
+from apps.analytics.api_builders import build_account_analytics, build_post_analytics
 from apps.api.limits import check_platform_quota
 from apps.api.schemas import PostResponse
 from apps.composer.models import Post
@@ -716,5 +717,118 @@ register_tool(
             "additionalProperties": False,
         },
         handler=_upload_media,
+    )
+)
+
+
+# ---------------------------------------------------------------------------
+# Tool: get_account_analytics
+# ---------------------------------------------------------------------------
+
+
+def _get_account_analytics(args: dict, context: dict[str, Any]) -> dict:
+    """Per-channel KPI summary over a rolling window.
+
+    Body is byte-equal to ``GET /api/v1/analytics/accounts/{account_id}``
+    because we reuse the same builder; ``test_rest_parity`` enforces
+    that.
+    """
+    _require_perm(context, "view_analytics")
+    if "account_id" not in args:
+        raise JsonRpcError(INVALID_PARAMS, "account_id is required")
+    days_raw = args.get("days", 30)
+    # Match the REST surface's ``Query(ge=7, le=90)`` constraint so an
+    # agent can't pick a wider window via MCP than via REST.
+    if not isinstance(days_raw, int) or isinstance(days_raw, bool) or days_raw < 7 or days_raw > 90:
+        raise JsonRpcError(INVALID_PARAMS, "days must be an integer between 7 and 90")
+    api_key = context["api_key"]
+    sa = _resolve_allowed_account(api_key, args["account_id"])
+    return _wrap_text(build_account_analytics(sa, days_raw).model_dump(mode="json"))
+
+
+register_tool(
+    Tool(
+        name="get_account_analytics",
+        description=(
+            "Read a channel's analytics summary over a rolling window: hero KPI metrics "
+            "(views/likes/reach/etc.), an engagement-rate card when the platform supports it, "
+            "and follower growth. Each metric is returned as ``{value, delta, series, kind}`` "
+            "where ``delta`` is the percent change vs. the prior equal-length window and "
+            "``series`` is the daily sparkline. Includes ``captured_at`` and ``next_sync_eta`` "
+            "so an agent can pick a sensible poll delay. Platforms without an analytics surface "
+            "(LinkedIn Personal, Bluesky, Mastodon) return ``analytics_available: false`` with "
+            "``unavailable_reason``. Requires the view_analytics permission."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "account_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "SocialAccount ID. Must be in this API key's allowlist.",
+                },
+                "days": {
+                    "type": "integer",
+                    "minimum": 7,
+                    "maximum": 90,
+                    "default": 30,
+                    "description": "Rolling window size in days. 7, 30, and 90 are the typical values.",
+                },
+            },
+            "required": ["account_id"],
+            "additionalProperties": False,
+        },
+        handler=_get_account_analytics,
+    )
+)
+
+
+# ---------------------------------------------------------------------------
+# Tool: get_post_analytics
+# ---------------------------------------------------------------------------
+
+
+def _get_post_analytics(args: dict, context: dict[str, Any]) -> dict:
+    """Per-post analytics with one envelope per PlatformPost child.
+
+    Designed for the polling loop after ``schedule_post`` /
+    ``create_draft``: pass the same ``post_id`` you got back from
+    creation and iterate until ``next_sync_eta`` recommends the next
+    poll. Drafts and scheduled posts return a valid envelope with empty
+    ``metric_tiles`` so the loop has a stable shape from day zero.
+    """
+    _require_perm(context, "view_analytics")
+    if "post_id" not in args:
+        raise JsonRpcError(INVALID_PARAMS, "post_id is required")
+    api_key = context["api_key"]
+    post = _get_post_for_key(api_key, args["post_id"])
+    return _wrap_text(build_post_analytics(post).model_dump(mode="json"))
+
+
+register_tool(
+    Tool(
+        name="get_post_analytics",
+        description=(
+            "Read a post's analytics, broken down per platform. For each PlatformPost child "
+            "returns the latest value and a since-publish daily sparkline for every metric the "
+            "platform reports, plus ``captured_at`` and ``next_sync_eta`` for polling. Drafts "
+            "and scheduled posts return an empty ``metric_tiles`` array (not an error), so this "
+            "tool is safe to call in a polling loop right after ``schedule_post``. Platforms "
+            "without analytics (LinkedIn Personal, Bluesky, Mastodon) carry "
+            "``analytics_available: false`` per child. Requires the view_analytics permission."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "post_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Parent Post ID (the same one returned by create_draft / schedule_post).",
+                },
+            },
+            "required": ["post_id"],
+            "additionalProperties": False,
+        },
+        handler=_get_post_analytics,
     )
 )

@@ -149,6 +149,40 @@ class TestListPage:
         # Empty state — no rows yet.
         assert b"No API keys issued yet." in r.content
 
+    def test_active_key_row_uses_modal_not_native_confirm(self, admin_client, admin_user, workspace, social_account):
+        """An active key renders the Alpine revoke-confirmation modal rather
+        than the old native ``confirm()`` dialog.
+
+        ``_key_row.html`` is the only place an active row is rendered, and no
+        other test exercised it — this guards both the CSP-safe modal markup
+        (Alpine directives, no inline ``on*`` handlers) and the removal of the
+        ``confirm()`` call.
+        """
+        from apps.api_keys import services
+
+        services.issue_api_key(
+            workspace=workspace,
+            social_accounts=[social_account],
+            issued_by=admin_user,
+            name="render-me",
+            permissions=[],
+        )
+        r = admin_client.get(reverse("api_keys:list"))
+        assert r.status_code == 200
+        html = r.content.decode()
+        # The active row and its teleported confirmation modal rendered.
+        assert "render-me" in html
+        assert "showRevokeModal" in html
+        assert 'x-teleport="body"' in html
+        assert "Revoke key" in html  # modal's submit button
+        # The native confirm() dialog wiring is gone.
+        assert "if (confirm(" not in html
+        # The explanatory comment must NOT leak into the page. A multi-line
+        # ``{# #}`` comment renders as literal text (Django only treats the
+        # hash form as a comment on a single line); here that stray text also
+        # became a flex child that squeezed the chip column.
+        assert "Alpine-driven confirmation modal" not in html
+
     def test_member_without_manage_api_keys_is_forbidden(self, member_user, member_membership):
         from django.test import Client
 
@@ -259,6 +293,40 @@ class TestIssue:
         assert len(keys) == 1
         assert keys[0].name == "test bot"
         assert "create_posts" in (keys[0].permissions or [])
+
+    def test_issue_redirects_and_reload_does_not_resurface_or_reissue(self, admin_client, workspace, social_account):
+        """Post/Redirect/Get: issuing lands on the list (not the POST
+        endpoint), reveals the token exactly once, and a reload neither
+        re-shows the modal nor mints a second key.
+        """
+        payload = {
+            "name": "reload bot",
+            "workspace_id": str(workspace.id),
+            "social_account_ids": [str(social_account.id)],
+            "permissions": ["create_posts"],
+        }
+        # Without follow we can see the redirect itself (PRG).
+        r0 = admin_client.post(reverse("api_keys:issue"), payload)
+        assert r0.status_code == 302
+        assert r0.headers["Location"] == reverse("api_keys:list")
+        # And the plaintext token is NOT carried in the redirect URL.
+        assert "bb_studio_" not in r0.headers["Location"]
+
+        # Following the redirect reveals the token once.
+        r1 = admin_client.get(r0.headers["Location"])
+        body1 = r1.content.decode()
+        assert "Save this token now." in body1
+        assert "bb_studio_" in body1
+        assert ApiKey.objects.filter(workspace=workspace).count() == 1
+
+        # Reloading the list page: token was popped, so no modal — and,
+        # crucially, no second key was created (the old non-PRG flow
+        # re-POSTed and minted a fresh key on every refresh).
+        r2 = admin_client.get(reverse("api_keys:list"))
+        body2 = r2.content.decode()
+        assert "Save this token now." not in body2
+        assert "bb_studio_" not in body2
+        assert ApiKey.objects.filter(workspace=workspace).count() == 1
 
     def test_missing_name_is_rejected(self, admin_client, workspace, social_account):
         r = admin_client.post(

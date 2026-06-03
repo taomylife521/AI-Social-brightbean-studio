@@ -571,3 +571,259 @@ class TestPermissionGating:
             _rpc("tools/call", {"name": "list_accounts", "arguments": {}}),
         )
         assert "error" not in body, body
+
+
+# ---------------------------------------------------------------------------
+# Analytics tools — get_account_analytics + get_post_analytics
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def instagram_account(db, workspace):
+    """Instagram account — exposes a full analytics surface."""
+    from apps.social_accounts.models import SocialAccount
+
+    return SocialAccount.objects.create(
+        workspace=workspace,
+        platform="instagram",
+        account_platform_id="ig-mcp",
+        account_name="IG MCP",
+        follower_count=500,
+        connection_status="connected",
+    )
+
+
+@pytest.fixture
+def analytics_key(db, user, owner_memberships, workspace, instagram_account, social_account):
+    return services.issue_api_key(
+        workspace=workspace,
+        social_accounts=[instagram_account, social_account],
+        issued_by=user,
+        name="mcp-analytics",
+        permissions=list(PERMISSION_KEYS),
+    )
+
+
+@pytest.fixture
+def analytics_client(analytics_key):
+    return _SecureClient(HTTP_AUTHORIZATION=f"Bearer {analytics_key.plaintext_token}")
+
+
+def _seed_ig_account_snapshots(account, days: int = 14):
+    """Populate enough rows to drive a non-zero derive over a 7-day window."""
+    from apps.analytics.metrics import PLATFORM_METRICS
+    from apps.analytics.models import AccountInsightsSnapshot
+
+    end = timezone.now().date()
+    for metric in PLATFORM_METRICS.get(account.platform, []):
+        for offset in range(2 * days):
+            day = end - timedelta(days=2 * days - 1 - offset)
+            AccountInsightsSnapshot.objects.create(
+                social_account=account,
+                metric_key=metric,
+                date=day,
+                value=10.0 + offset,
+            )
+
+
+def _seed_published_ig_post(workspace, account):
+    """Create a published IG PlatformPost with a small snapshot history."""
+    from apps.analytics.metrics import post_metrics_for
+    from apps.analytics.models import PostInsightsSnapshot
+
+    published_at = timezone.now() - timedelta(hours=4)
+    post = Post.objects.create(workspace=workspace, caption="mcp ig post")
+    pp = PlatformPost.objects.create(
+        post=post,
+        social_account=account,
+        status="published",
+        published_at=published_at,
+        platform_post_id="ig-mcp-xyz",
+    )
+    end = timezone.now().date()
+    for metric in post_metrics_for(account.platform):
+        for offset in range(3):
+            day = end - timedelta(days=2 - offset)
+            PostInsightsSnapshot.objects.create(
+                platform_post=pp,
+                metric_key=metric,
+                date=day,
+                value=5.0 + offset,
+            )
+    return post, pp
+
+
+@pytest.mark.django_db
+class TestAnalyticsTools:
+    def test_tools_list_includes_analytics_tools(self, analytics_client):
+        status, body = _post(analytics_client, _rpc("tools/list"))
+        names = {t["name"] for t in body["result"]["tools"]}
+        assert {"get_account_analytics", "get_post_analytics"} <= names
+
+    def test_get_account_analytics_happy_path(self, analytics_client, instagram_account):
+        _seed_ig_account_snapshots(instagram_account)
+        status, body = _post(
+            analytics_client,
+            _rpc(
+                "tools/call",
+                {
+                    "name": "get_account_analytics",
+                    "arguments": {"account_id": str(instagram_account.id), "days": 7},
+                },
+            ),
+        )
+        assert status == 200
+        assert "error" not in body, body
+        inner = json.loads(body["result"]["content"][0]["text"])
+        assert inner["account_id"] == str(instagram_account.id)
+        assert inner["platform"] == "instagram"
+        assert inner["days"] == 7
+        assert inner["analytics_available"] is True
+        assert inner["hero_metrics"]
+        assert inner["captured_at"] is not None
+
+    def test_get_account_analytics_unavailable_platform(self, analytics_client, social_account):
+        status, body = _post(
+            analytics_client,
+            _rpc(
+                "tools/call",
+                {"name": "get_account_analytics", "arguments": {"account_id": str(social_account.id)}},
+            ),
+        )
+        inner = json.loads(body["result"]["content"][0]["text"])
+        assert inner["analytics_available"] is False
+        assert inner["unavailable_reason"]
+        assert inner["hero_metrics"] == []
+
+    def test_get_account_analytics_rejects_account_outside_allowlist(self, analytics_client, second_account):
+        status, body = _post(
+            analytics_client,
+            _rpc(
+                "tools/call",
+                {"name": "get_account_analytics", "arguments": {"account_id": str(second_account.id)}},
+            ),
+        )
+        assert body["error"]["code"] == INVALID_PARAMS
+        assert "allowlist" in body["error"]["message"].lower()
+
+    def test_get_account_analytics_rejects_invalid_days(self, analytics_client, instagram_account):
+        status, body = _post(
+            analytics_client,
+            _rpc(
+                "tools/call",
+                {
+                    "name": "get_account_analytics",
+                    "arguments": {"account_id": str(instagram_account.id), "days": 200},
+                },
+            ),
+        )
+        # JSON-schema rejection comes back as INVALID_PARAMS at the transport
+        # level — the handler's own guard catches it if validation bypasses.
+        assert body["error"]["code"] == INVALID_PARAMS
+
+    def test_get_post_analytics_happy_path(self, analytics_client, workspace, instagram_account):
+        post, _pp = _seed_published_ig_post(workspace, instagram_account)
+        status, body = _post(
+            analytics_client,
+            _rpc("tools/call", {"name": "get_post_analytics", "arguments": {"post_id": str(post.id)}}),
+        )
+        assert status == 200
+        assert "error" not in body, body
+        inner = json.loads(body["result"]["content"][0]["text"])
+        assert inner["post_id"] == str(post.id)
+        assert len(inner["platform_posts"]) == 1
+        child = inner["platform_posts"][0]
+        assert child["analytics_available"] is True
+        assert child["metric_tiles"], "expected metric tiles for published IG post"
+
+    def test_get_post_analytics_draft_returns_empty_tiles(self, analytics_client, workspace, instagram_account):
+        post = Post.objects.create(workspace=workspace, caption="draft")
+        PlatformPost.objects.create(post=post, social_account=instagram_account, status="draft")
+        status, body = _post(
+            analytics_client,
+            _rpc("tools/call", {"name": "get_post_analytics", "arguments": {"post_id": str(post.id)}}),
+        )
+        assert "error" not in body
+        inner = json.loads(body["result"]["content"][0]["text"])
+        child = inner["platform_posts"][0]
+        assert child["status"] == "draft"
+        assert child["analytics_available"] is True
+        assert child["metric_tiles"] == []
+        assert child["captured_at"] is None
+
+    def test_get_post_analytics_missing_post_id(self, analytics_client):
+        status, body = _post(
+            analytics_client,
+            _rpc("tools/call", {"name": "get_post_analytics", "arguments": {}}),
+        )
+        # JSON-schema enforces required → INVALID_PARAMS via the transport
+        # validator. Either way it must surface as INVALID_PARAMS.
+        assert body["error"]["code"] == INVALID_PARAMS
+
+
+# ---------------------------------------------------------------------------
+# view_analytics permission gate — MCP must enforce the same gate as REST.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def no_view_analytics_membership(db, organization, workspace):
+    """A workspace member granted everything except view_analytics."""
+    from apps.accounts.models import User
+
+    member = User.objects.create_user(
+        email="no-analytics@example.com",
+        password="testpass123",
+        name="No Analytics",
+        tos_accepted_at=timezone.now(),
+    )
+    OrgMembership.objects.create(user=member, organization=organization, org_role=OrgMembership.OrgRole.OWNER)
+    return WorkspaceMembership.objects.create(
+        user=member,
+        workspace=workspace,
+        workspace_role=WorkspaceMembership.WorkspaceRole.OWNER,
+    )
+
+
+@pytest.fixture
+def no_view_analytics_key(db, no_view_analytics_membership, workspace, instagram_account, social_account):
+    return services.issue_api_key(
+        workspace=workspace,
+        social_accounts=[instagram_account, social_account],
+        issued_by=no_view_analytics_membership.user,
+        name="mcp-no-view-analytics",
+        # Every permission EXCEPT view_analytics. The issuer is an owner so
+        # the permission intersection lets us slim the grant.
+        permissions=[p for p in PERMISSION_KEYS if p != "view_analytics"],
+    )
+
+
+@pytest.fixture
+def no_view_analytics_client(no_view_analytics_key):
+    return _SecureClient(HTTP_AUTHORIZATION=f"Bearer {no_view_analytics_key.plaintext_token}")
+
+
+@pytest.mark.django_db
+class TestAnalyticsPermissionGate:
+    def test_get_account_analytics_denied_without_view_analytics(self, no_view_analytics_client, instagram_account):
+        status, body = _post(
+            no_view_analytics_client,
+            _rpc(
+                "tools/call",
+                {"name": "get_account_analytics", "arguments": {"account_id": str(instagram_account.id)}},
+            ),
+        )
+        assert body["error"]["code"] == INVALID_PARAMS
+        assert "view_analytics" in body["error"]["message"].lower()
+
+    def test_get_post_analytics_denied_without_view_analytics(
+        self, no_view_analytics_client, workspace, instagram_account
+    ):
+        post = Post.objects.create(workspace=workspace, caption="x")
+        PlatformPost.objects.create(post=post, social_account=instagram_account, status="draft")
+        status, body = _post(
+            no_view_analytics_client,
+            _rpc("tools/call", {"name": "get_post_analytics", "arguments": {"post_id": str(post.id)}}),
+        )
+        assert body["error"]["code"] == INVALID_PARAMS
+        assert "view_analytics" in body["error"]["message"].lower()

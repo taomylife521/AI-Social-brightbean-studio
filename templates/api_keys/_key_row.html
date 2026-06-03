@@ -48,14 +48,66 @@
         {% endif %}
     </div>
     {% if row.status == "active" %}
-    <form method="POST" action="{% url 'api_keys:revoke' row.id %}"
-          @submit.prevent="if (confirm('Revoke this key? Agents using it will immediately start receiving 401.')) $el.submit()">
-        {% csrf_token %}
-        <button type="submit"
+    {% comment %}
+    Revoke flow. The trigger opens an Alpine-driven confirmation modal
+    instead of the native confirm() dialog — same look as the issuance
+    modal, and CSP-safe: only Alpine directives and simple state toggles,
+    no inline on* handlers and no eval-heavy expressions.
+
+    Must be a comment/endcomment block (not a hash-style template comment):
+    the hash form is single-line only, so a multi-line one leaks as literal
+    text — and as a stray flex child here it squeezed the content column,
+    forcing the account/permission chips to wrap one per line.
+    {% endcomment %}
+    <div x-data="{ showRevokeModal: false }">
+        <button type="button"
+                @click="showRevokeModal = true"
                 class="btn-neutral px-4 py-1.5 text-xs font-medium rounded-full cursor-pointer whitespace-nowrap"
                 style="background: var(--error-soft, #FEE2E2); color: var(--error-700, #B91C1C);">
             Revoke
         </button>
-    </form>
+
+        <template x-teleport="body">
+            <div x-show="showRevokeModal" x-transition.opacity
+                 @keydown.escape.window="showRevokeModal = false"
+                 class="fixed inset-0 z-50 flex items-center justify-center"
+                 style="background: rgba(0,0,0,0.4);">
+                <div @click.outside="showRevokeModal = false"
+                     x-show="showRevokeModal" x-transition
+                     class="w-full max-w-md mx-4 rounded-xl flex flex-col"
+                     style="background: var(--surface-0); border: 1px solid var(--border); box-shadow: 0 10px 40px rgba(0,0,0,0.18);">
+                    <div class="flex items-start justify-between px-6 pt-6 pb-4">
+                        <div>
+                            <h3 class="text-lg font-semibold" style="color: var(--text-primary);">Revoke API key</h3>
+                            <p class="text-xs mt-1" style="color: var(--text-tertiary);">This can't be undone.</p>
+                        </div>
+                        <button type="button" @click="showRevokeModal = false"
+                                class="text-xl leading-none px-2 cursor-pointer"
+                                style="color: var(--text-tertiary);">&times;</button>
+                    </div>
+
+                    <p class="px-6 pb-2 text-sm" style="color: var(--text-secondary);">
+                        Revoke <strong style="color: var(--text-primary);">{{ row.name }}</strong>?
+                        Agents using it will immediately start receiving <code>401 Unauthorized</code>.
+                    </p>
+
+                    <form method="POST" action="{% url 'api_keys:revoke' row.id %}"
+                          class="flex items-center justify-end gap-3 px-6 pt-5 pb-6">
+                        {% csrf_token %}
+                        <button type="button" @click="showRevokeModal = false"
+                                class="btn-neutral px-4 py-2 text-sm font-medium rounded-full cursor-pointer"
+                                style="background: var(--neutral-100); color: var(--text-primary);">
+                            Cancel
+                        </button>
+                        <button type="submit"
+                                class="px-5 py-2 text-sm font-medium rounded-full cursor-pointer"
+                                style="background: var(--error-700, #B91C1C); color: white;">
+                            Revoke key
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </template>
+    </div>
     {% endif %}
 </div>

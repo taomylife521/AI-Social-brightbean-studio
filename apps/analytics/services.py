@@ -19,6 +19,7 @@ from django.utils import timezone
 from apps.composer.models import PlatformPost
 from apps.social_accounts.models import SocialAccount
 
+from .constants import NO_ANALYTICS_PLATFORMS
 from .derive import DerivedMetric, derive, engagement_rate, kind_of
 from .metrics import (
     ACCOUNT_ONLY,
@@ -28,6 +29,41 @@ from .metrics import (
     post_metrics_for,
 )
 from .models import AccountInsightsSnapshot, PostInsightsSnapshot
+
+
+def unavailable_reason(platform: str, enabled_platforms: list[str] | None = None) -> str | None:
+    """Why ``platform`` has no live analytics, or ``None`` if it does.
+
+    Combines the two independent gates that the analytics stack honors:
+
+    * :data:`apps.analytics.constants.NO_ANALYTICS_PLATFORMS` — the
+      platform's API exposes no aggregate analytics at all (LinkedIn
+      Personal, Bluesky, Mastodon).
+    * :class:`apps.social_accounts.models.AnalyticsPlatformConfig` — an
+      admin has switched the platform off (e.g. provider app-review for
+      analytics scopes is still pending), so the background sync skips it.
+
+    Lives in ``services.py`` (not the agent-API builders) so the web view
+    (``apps/analytics/views.py``), the sync cron
+    (``apps/analytics/tasks.py``) and the agent-API surface all import
+    the same predicate — if a third gate ever lands, only this function
+    needs to know.
+
+    ``enabled_platforms`` may be supplied (e.g. in a per-request cache)
+    to avoid re-querying ``AnalyticsPlatformConfig`` once per call.
+    """
+    inherent = NO_ANALYTICS_PLATFORMS.get(platform)
+    if inherent is not None:
+        return inherent
+    if enabled_platforms is None:
+        # Lazy import to avoid pulling the social_accounts app at module
+        # load time — services.py is imported by URL config.
+        from apps.social_accounts.models import AnalyticsPlatformConfig
+
+        enabled_platforms = AnalyticsPlatformConfig.enabled_platforms()
+    if platform not in enabled_platforms:
+        return "Analytics is not currently enabled for this platform."
+    return None
 
 
 def _series_for(
@@ -59,14 +95,68 @@ def account_series_map(
     account: SocialAccount,
     days: int,
 ) -> dict[str, list[float]]:
-    """Return ``{metric_key: 2*days-long series}`` for every platform metric."""
+    """Return ``{metric_key: 2*days-long series}`` for every platform metric.
+
+    Kept as a thin wrapper around :func:`account_analytics_bundle` for
+    callers that don't need the freshness side-channel (the web view's
+    chart-only HTMX partial). Most callers should use the bundle so they
+    can also recover the latest ``captured_at`` without an extra query.
+    """
+    return account_analytics_bundle(account, days)["series_map"]
+
+
+def account_analytics_bundle(account: SocialAccount, days: int) -> dict[str, Any]:
+    """Single-pass snapshot fetch for one account over a ``2 * days`` window.
+
+    Returns a dict with:
+      - ``series_map``: ``{metric_key: 2*days-long series}``
+      - ``max_captured_at``: latest ``captured_at`` across the fetched rows,
+        or ``None`` if no snapshots exist in the window.
+
+    Replaces the previous "1 query per metric" pattern (8 SELECTs for IG)
+    with a single bulk SELECT, and exposes the freshness max so callers
+    don't need a separate ``Max("captured_at")`` aggregate.
+    """
     end = timezone.now().date()
-    return {m: _series_for(account, m, end, days) for m in PLATFORM_METRICS.get(account.platform, [])}
+    start = end - timedelta(days=2 * days - 1)
+    platform_metrics = PLATFORM_METRICS.get(account.platform, [])
+
+    rows = list(
+        AccountInsightsSnapshot.objects.filter(
+            social_account=account,
+            metric_key__in=platform_metrics,
+            date__gte=start,
+            date__lte=end,
+        )
+    )
+    by_metric: dict[str, dict[dt_date, float]] = defaultdict(dict)
+    max_captured: Any = None
+    for r in rows:
+        by_metric[r.metric_key][r.date] = r.value
+        if max_captured is None or r.captured_at > max_captured:
+            max_captured = r.captured_at
+
+    series_map = {
+        m: [by_metric[m].get(start + timedelta(days=i), 0.0) for i in range(2 * days)] for m in platform_metrics
+    }
+    return {"series_map": series_map, "max_captured_at": max_captured}
 
 
-def hero_cards(account: SocialAccount, days: int) -> list[dict[str, Any]]:
-    """List of {metric, label, derived} for the hero KPI cards."""
-    series_map = account_series_map(account, days)
+def hero_cards(
+    account: SocialAccount,
+    days: int,
+    *,
+    series_map: dict[str, list[float]] | None = None,
+) -> list[dict[str, Any]]:
+    """List of {metric, label, derived} for the hero KPI cards.
+
+    Pass ``series_map`` to reuse an already-fetched
+    :func:`account_analytics_bundle` result. Without it, the helper
+    falls back to its own per-metric queries (kept for the views that
+    iterate the trio individually).
+    """
+    if series_map is None:
+        series_map = account_series_map(account, days)
     return [
         {
             "metric": m,
@@ -77,18 +167,27 @@ def hero_cards(account: SocialAccount, days: int) -> list[dict[str, Any]]:
     ]
 
 
-def engagement_card(account: SocialAccount, days: int) -> dict[str, Any] | None:
+def engagement_card(
+    account: SocialAccount,
+    days: int,
+    *,
+    series_map: dict[str, list[float]] | None = None,
+) -> dict[str, Any] | None:
     """Engagement-rate card payload, or ``None`` if the platform lacks a denom.
 
     Returns a dict with:
       - ``rate``: DerivedMetric for the rate headline + sparkline
       - ``parts``: list of {metric, label, derived} for the 2x2 sub-grid
+
+    Pass ``series_map`` to reuse an already-fetched
+    :func:`account_analytics_bundle` result.
     """
     from .metrics import ENGAGEMENT_PARTS, has_engagement_card
 
     if not has_engagement_card(account.platform):
         return None
-    series_map = account_series_map(account, days)
+    if series_map is None:
+        series_map = account_series_map(account, days)
     rate = engagement_rate(series_map, days, fallback_followers=account.follower_count)
     parts = [
         {
@@ -129,16 +228,50 @@ def hero_chart_data(
     }
 
 
-def follower_growth(account: SocialAccount, days: int) -> DerivedMetric | None:
-    """Account-level follower growth (new followers/subscribers) for the header."""
+def follower_growth(
+    account: SocialAccount,
+    days: int,
+    *,
+    series_map: dict[str, list[float]] | None = None,
+) -> DerivedMetric | None:
+    """Account-level follower growth (new followers/subscribers) for the header.
+
+    Kept for the templates that destructure the bare ``DerivedMetric`` —
+    callers that need the underlying metric key (e.g. the agent-API
+    schema) should use :func:`follower_growth_metric` instead so they
+    don't have to re-derive the key from ``PLATFORM_METRICS``.
+    """
+    pair = follower_growth_metric(account, days, series_map=series_map)
+    return pair[1] if pair else None
+
+
+def follower_growth_metric(
+    account: SocialAccount,
+    days: int,
+    *,
+    series_map: dict[str, list[float]] | None = None,
+) -> tuple[str, DerivedMetric] | None:
+    """Same as :func:`follower_growth` but also returns the metric key.
+
+    Returns ``(metric_key, derived)`` where ``metric_key`` is
+    ``"subscribers"`` on YouTube, ``"follows"`` elsewhere, and ``None``
+    on platforms without an account-level growth metric.
+
+    Pass ``series_map`` to reuse an already-fetched
+    :func:`account_analytics_bundle` result instead of issuing another
+    per-metric query.
+    """
     growth_metric = next(
         (m for m in ("subscribers", "follows") if m in PLATFORM_METRICS.get(account.platform, [])),
         None,
     )
     if not growth_metric:
         return None
-    series = _series_for(account, growth_metric, timezone.now().date(), days)
-    return derive(series, days, kind_of(growth_metric))
+    if series_map is not None and growth_metric in series_map:
+        series = series_map[growth_metric]
+    else:
+        series = _series_for(account, growth_metric, timezone.now().date(), days)
+    return growth_metric, derive(series, days, kind_of(growth_metric))
 
 
 def all_posts_for(
@@ -229,11 +362,18 @@ def all_posts_for(
 
 
 def post_detail(post: PlatformPost) -> dict[str, Any]:
-    """Payload for the slide-over post-detail drawer."""
+    """Payload for the slide-over post-detail drawer.
+
+    Includes ``captured_at`` — the latest snapshot timestamp across the
+    rows backing this post's metric tiles — so callers that also need the
+    freshness signal (the agent API's
+    :func:`apps.analytics.freshness.post_freshness`) don't have to issue
+    a separate ``Max`` aggregate query.
+    """
     account = post.social_account
     metrics = post_metrics_for(account.platform)
     stats = _latest_post_stats([post], metrics).get(post.id, {})
-    sparklines_by_metric = _post_sparklines(post, metrics)
+    sparklines_by_metric, max_captured = _post_sparklines_with_freshness(post, metrics)
     return {
         "post": post,
         "account": account,
@@ -242,6 +382,7 @@ def post_detail(post: PlatformPost) -> dict[str, Any]:
         "days_ago": (timezone.now() - post.published_at).days if post.published_at else None,
         "media_kind": _media_kind(post),
         "media_preview": _first_media_preview(post),
+        "captured_at": max_captured,
         "metric_tiles": [
             {
                 "key": m,
@@ -286,13 +427,26 @@ def _latest_post_stats(posts: Iterable[PlatformPost], metrics: list[str]) -> dic
 
 def _post_sparklines(post: PlatformPost, metrics: list[str]) -> dict[str, list[float]]:
     """Daily history per metric since publish — for the detail-drawer sparkline."""
+    return _post_sparklines_with_freshness(post, metrics)[0]
+
+
+def _post_sparklines_with_freshness(post: PlatformPost, metrics: list[str]) -> tuple[dict[str, list[float]], Any]:
+    """Same as :func:`_post_sparklines` but also returns the max ``captured_at``.
+
+    Used by :func:`post_detail` so the freshness side-channel
+    (:func:`apps.analytics.freshness.post_freshness`) doesn't need its own
+    ``Max("captured_at")`` aggregate against the same rows.
+    """
     rows = PostInsightsSnapshot.objects.filter(platform_post=post, metric_key__in=metrics).order_by(
         "metric_key", "date"
     )
     out: dict[str, list[float]] = defaultdict(list)
+    max_captured: Any = None
     for r in rows:
         out[r.metric_key].append(r.value)
-    return dict(out)
+        if max_captured is None or r.captured_at > max_captured:
+            max_captured = r.captured_at
+    return dict(out), max_captured
 
 
 def _media_kind(post: PlatformPost) -> str:

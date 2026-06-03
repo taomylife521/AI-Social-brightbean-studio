@@ -19,6 +19,7 @@ from ninja import Field, Schema
 from pydantic import field_serializer
 
 if TYPE_CHECKING:
+    from apps.analytics.derive import DerivedMetric
     from apps.composer.models import PlatformPost, Post
 
 
@@ -385,6 +386,185 @@ class MediaAssetListResponse(Schema):
     items: list[MediaAssetResponse]
     next_cursor: str | None = None
     limit: int
+
+
+# ---------------------------------------------------------------------------
+# /analytics — read
+# ---------------------------------------------------------------------------
+
+
+class DerivedMetricResponse(Schema):
+    """A single derived metric over a rolling window.
+
+    Mirrors ``apps.analytics.derive.DerivedMetric`` but with a stable wire
+    shape: agents can rely on every metric carrying the same five fields.
+    The dataclass itself isn't a Pydantic model, so we route through
+    :meth:`from_derived` rather than letting Ninja convert it implicitly.
+    """
+
+    key: str = Field(..., description="Metric identifier (e.g. ``views``, ``likes``, ``engagement``).")
+    label: str = Field(..., description="Human-readable label for the metric (e.g. ``Views``).")
+    kind: str = Field(..., description="Format hint: ``count`` | ``percent`` | ``minutes``.")
+    value: float = Field(
+        ...,
+        description=(
+            "Aggregate value over the current window. Sum for ``count`` metrics, "
+            "average for ``percent`` and ``minutes`` (since those are already daily rates)."
+        ),
+    )
+    delta: float = Field(
+        ...,
+        description="Percent change vs. the previous equal-length window. ``0.0`` when there is no prior baseline.",
+    )
+    series: list[float] = Field(
+        default_factory=list,
+        description="Daily values for the current window, oldest first.",
+    )
+
+    @classmethod
+    def from_derived(cls, key: str, label: str, derived: DerivedMetric) -> DerivedMetricResponse:
+        return cls(
+            key=key,
+            label=label,
+            kind=derived.kind,
+            value=derived.value,
+            delta=derived.delta,
+            series=list(derived.series),
+        )
+
+
+class EngagementCardResponse(Schema):
+    rate: DerivedMetricResponse = Field(
+        ...,
+        description="Engagement rate = sum(parts) / denom * 100. The denom is the first available of ``reach, impressions, views, plays``.",
+    )
+    parts: list[DerivedMetricResponse] = Field(
+        default_factory=list,
+        description="The component metrics that feed the rate's numerator (likes, comments, shares, …).",
+    )
+
+
+class AccountAnalyticsResponse(Schema):
+    """Channel-level analytics summary over a rolling window of days."""
+
+    account_id: uuid.UUID
+    platform: str
+    account_name: str
+    connection_status: str = Field(
+        ...,
+        description=(
+            "``connected``, ``token_expiring``, ``disconnected``, or ``error``. "
+            "Disconnected accounts still return historical analytics, but new data may not be flowing."
+        ),
+    )
+    days: int = Field(..., description="Window size (in days) used for derivation. One of 7, 30, or 90.")
+    analytics_available: bool = Field(
+        ...,
+        description=(
+            "``false`` for platforms whose APIs don't expose aggregate analytics "
+            "(currently LinkedIn Personal, Bluesky, Mastodon). Metric arrays are empty when false."
+        ),
+    )
+    unavailable_reason: str | None = Field(
+        None,
+        description="Human-readable reason the analytics surface is unavailable, when ``analytics_available`` is false.",
+    )
+    hero_metrics: list[DerivedMetricResponse] = Field(
+        default_factory=list,
+        description="Top-line per-channel KPIs (reach-like counts). Engagement parts are in ``engagement.parts``.",
+    )
+    engagement: EngagementCardResponse | None = Field(
+        None,
+        description="Engagement-rate card, or ``null`` when the platform lacks a reach-like denominator.",
+    )
+    follower_growth: DerivedMetricResponse | None = Field(
+        None,
+        description="New followers / subscribers gained over the window, when the platform reports it.",
+    )
+    captured_at: dt.datetime | None = Field(
+        None,
+        description="Most recent ``captured_at`` across the account's snapshots. ``null`` if no rows yet.",
+    )
+    next_sync_eta: dt.datetime | None = Field(
+        None,
+        description=(
+            "Approximate next time the background sync will refresh this account. "
+            "``null`` for platforms without analytics. Use it to pick a polling delay."
+        ),
+    )
+
+    @field_serializer("captured_at", "next_sync_eta")
+    def _serialize_dt(self, value: dt.datetime | None) -> str | None:
+        return _serialize_utc_z(value)
+
+
+class PostMetricTileResponse(Schema):
+    """One metric tile in the per-post analytics drawer."""
+
+    key: str
+    label: str
+    kind: str
+    value: float = Field(..., description="Most recent snapshot value for this metric on this post.")
+    series: list[float] = Field(
+        default_factory=list,
+        description="Daily sparkline since publish — one entry per day with a recorded snapshot.",
+    )
+    is_primary: bool = Field(
+        False,
+        description="True for the platform's default headline metric (e.g. ``views`` for YouTube).",
+    )
+
+
+class PlatformPostAnalyticsResponse(Schema):
+    """Analytics for a single per-platform child of a Post."""
+
+    platform_post_id: uuid.UUID
+    social_account_id: uuid.UUID
+    platform: str
+    status: str
+    published_at: dt.datetime | None
+    analytics_available: bool = Field(
+        ...,
+        description=(
+            "``false`` for platforms without analytics. ``true`` for everything else — including "
+            "drafts and scheduled posts, which simply return empty metric tiles until publish."
+        ),
+    )
+    unavailable_reason: str | None = None
+    metric_tiles: list[PostMetricTileResponse] = Field(
+        default_factory=list,
+        description="One tile per metric this platform reports. Empty until the first snapshot lands.",
+    )
+    captured_at: dt.datetime | None = Field(
+        None,
+        description="Most recent ``captured_at`` across this platform-post's snapshots.",
+    )
+    next_sync_eta: dt.datetime | None = Field(
+        None,
+        description=(
+            "Approximate next sync time based on the post's age: <24h→+1h, 1-7d→+6h, 7-30d→+1d, "
+            "30-90d→+7d, >90d→null (syncs have stopped)."
+        ),
+    )
+
+    @field_serializer("published_at", "captured_at", "next_sync_eta")
+    def _serialize_dt(self, value: dt.datetime | None) -> str | None:
+        return _serialize_utc_z(value)
+
+
+class PostAnalyticsResponse(Schema):
+    """Analytics for a Post, with per-platform breakdown.
+
+    Mirrors ``PostResponse``'s parent-Post-with-platform-children shape so
+    agents that already track ``post_id`` from ``schedule_post`` /
+    ``create_draft`` can poll analytics without learning new IDs.
+    """
+
+    post_id: uuid.UUID
+    workspace_id: uuid.UUID
+    title: str
+    caption: str
+    platform_posts: list[PlatformPostAnalyticsResponse]
 
 
 # ---------------------------------------------------------------------------

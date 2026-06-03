@@ -17,6 +17,7 @@ from ninja.errors import HttpError
 
 from apps.api.auth import ApiKeyAuth
 from apps.api.routers.accounts import router as accounts_router
+from apps.api.routers.analytics import router as analytics_router
 from apps.api.routers.me import router as me_router
 from apps.api.routers.media import router as media_router
 from apps.api.routers.posts import router as posts_router
@@ -62,8 +63,10 @@ api.add_router("/me", me_router)
 api.add_router("/accounts", accounts_router)
 api.add_router("/posts", posts_router)
 api.add_router("/media", media_router)
+api.add_router("/analytics", analytics_router)
 # MCP Streamable HTTP transport. Same auth, same audit, same rate
-# limits — only the wire protocol differs.
+# limits — only the wire protocol differs. Mounted last so its path
+# prefix can't shadow another router.
 api.add_router("/mcp", mcp_router)
 
 
@@ -167,6 +170,10 @@ def _action_for_path(method: str, path: str, *, status_code: int) -> str:
     ``WHERE action LIKE 'post.%'`` catches both successes and 4xx.
     """
     # Order matters: longer prefixes first.
+    if "/analytics/accounts/" in path:
+        return f"analytics.read.account.{status_code}"
+    if "/analytics/posts/" in path:
+        return f"analytics.read.post.{status_code}"
     if "/posts/" in path:
         if path.endswith("/schedule"):
             return f"post.schedule.{status_code}"

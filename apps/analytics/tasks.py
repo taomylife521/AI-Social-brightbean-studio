@@ -9,6 +9,11 @@ Cadence (per the plan's "How new metrics get pulled" section):
   * Posts 7–30 days old              → daily
   * Posts 30–90 days old             → weekly
   * Posts > 90 days old              → stop
+
+The per-post cadence is exposed via :func:`post_sync_interval` so callers
+that need the same ladder (the agent-API freshness helpers in
+``apps/analytics/freshness.py``) cannot drift from what the sync loop
+actually does.
 """
 
 from __future__ import annotations
@@ -24,6 +29,37 @@ from django.db import transaction
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Post-sync cadence — single source of truth.
+# ---------------------------------------------------------------------------
+
+# Tail of the per-post sync schedule. Each entry is ``(max_age, interval)`` —
+# the first row whose ``max_age`` is greater than the post's age wins. The
+# final row is ``(None, None)`` to mark the past-horizon stop.
+_POST_SYNC_CADENCE: tuple[tuple[timedelta | None, timedelta | None], ...] = (
+    (timedelta(days=1), timedelta(hours=1)),
+    (timedelta(days=7), timedelta(hours=6)),
+    (timedelta(days=30), timedelta(days=1)),
+    (timedelta(days=90), timedelta(days=7)),
+    (None, None),  # > 90 days — background sync has stopped.
+)
+
+
+def post_sync_interval(age: timedelta) -> timedelta | None:
+    """Return the sync interval for a post of the given ``age``.
+
+    ``None`` means the post is past the 90-day horizon and the background
+    sync no longer refreshes it. Shared between the sync loop
+    (``_post_cadence_due``) and the agent-API freshness helpers so the
+    two cannot drift.
+    """
+    for max_age, interval in _POST_SYNC_CADENCE:
+        if max_age is None or age < max_age:
+            return interval
+    return None  # unreachable — the table always ends in (None, None)
+
 
 # Per-platform backfill window (days) on initial connect.
 BACKFILL_DAYS_PER_PLATFORM: dict[str, int] = {
@@ -326,17 +362,9 @@ def _post_cadence_due(post, now=None) -> bool:
     now = now or timezone.now()
     if not post.published_at:
         return False
-    age = now - post.published_at
-    if age > timedelta(days=90):
-        return False
-    if age < timedelta(days=1):
-        cadence = timedelta(hours=1)
-    elif age < timedelta(days=7):
-        cadence = timedelta(hours=6)
-    elif age < timedelta(days=30):
-        cadence = timedelta(days=1)
-    else:
-        cadence = timedelta(days=7)
+    cadence = post_sync_interval(now - post.published_at)
+    if cadence is None:
+        return False  # past the 90-day horizon.
     last = (
         PostInsightsSnapshot.objects.filter(platform_post=post)
         .order_by("-captured_at")

@@ -195,3 +195,191 @@ class TestRestMcpPostParity:
         assert body["scheduled_at"].endswith("Z"), body["scheduled_at"]
         assert "+00:00" not in body["scheduled_at"]
         assert body["platform_posts"][0]["scheduled_at"].endswith("Z")
+
+
+# ---------------------------------------------------------------------------
+# Analytics parity — same builder powers REST + MCP, so payloads must match.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def instagram_account(db, workspace):
+    from apps.social_accounts.models import SocialAccount
+
+    return SocialAccount.objects.create(
+        workspace=workspace,
+        platform="instagram",
+        account_platform_id="ig-parity",
+        account_name="Parity IG",
+        follower_count=500,
+        connection_status="connected",
+    )
+
+
+@pytest.fixture
+def analytics_key(db, user, owner_memberships, workspace, instagram_account):
+    return services.issue_api_key(
+        workspace=workspace,
+        social_accounts=[instagram_account],
+        issued_by=user,
+        name="analytics-parity",
+        permissions=list(PERMISSION_KEYS),
+    )
+
+
+@pytest.fixture
+def analytics_client(analytics_key):
+    return _SecureClient(HTTP_AUTHORIZATION=f"Bearer {analytics_key.plaintext_token}")
+
+
+@pytest.fixture
+def published_ig_post(db, workspace, instagram_account):
+    """Published IG post with both account- and post-level snapshots."""
+    from apps.analytics.metrics import PLATFORM_METRICS, post_metrics_for
+    from apps.analytics.models import (
+        AccountInsightsSnapshot,
+        PostInsightsSnapshot,
+    )
+
+    published_at = timezone.now() - timedelta(hours=12)
+    post = Post.objects.create(workspace=workspace, caption="parity post")
+    pp = PlatformPost.objects.create(
+        post=post,
+        social_account=instagram_account,
+        status="published",
+        published_at=published_at,
+        platform_post_id="ig-parity-xyz",
+    )
+
+    end = timezone.now().date()
+    for metric in PLATFORM_METRICS["instagram"]:
+        for offset in range(14):
+            AccountInsightsSnapshot.objects.create(
+                social_account=instagram_account,
+                metric_key=metric,
+                date=end - timedelta(days=13 - offset),
+                value=20.0 + offset,
+            )
+    for metric in post_metrics_for("instagram"):
+        for offset in range(2):
+            PostInsightsSnapshot.objects.create(
+                platform_post=pp,
+                metric_key=metric,
+                date=end - timedelta(days=1 - offset),
+                value=3.0 + offset,
+            )
+    return post, pp
+
+
+@pytest.mark.django_db
+class TestRestMcpAnalyticsParity:
+    def test_account_analytics_bodies_match(self, analytics_client, instagram_account, published_ig_post):
+        rest = analytics_client.get(f"/api/v1/analytics/accounts/{instagram_account.id}?days=7")
+        assert rest.status_code == 200, rest.content
+        rest_body = rest.json()
+
+        mcp = analytics_client.post(
+            MCP_URL,
+            data=json.dumps(
+                _rpc(
+                    "tools/call",
+                    {
+                        "name": "get_account_analytics",
+                        "arguments": {"account_id": str(instagram_account.id), "days": 7},
+                    },
+                )
+            ),
+            content_type="application/json",
+        )
+        assert mcp.status_code == 200
+        envelope = mcp.json()
+        assert "error" not in envelope, envelope
+        mcp_body = json.loads(envelope["result"]["content"][0]["text"])
+
+        assert mcp_body == rest_body, (
+            "MCP and REST disagree on the AccountAnalyticsResponse payload. "
+            "Both surfaces must call build_account_analytics — do not hand-shape one side."
+        )
+
+    def test_post_analytics_bodies_match(self, analytics_client, published_ig_post):
+        post, _pp = published_ig_post
+        rest = analytics_client.get(f"/api/v1/analytics/posts/{post.id}")
+        assert rest.status_code == 200, rest.content
+        rest_body = rest.json()
+
+        mcp = analytics_client.post(
+            MCP_URL,
+            data=json.dumps(
+                _rpc(
+                    "tools/call",
+                    {"name": "get_post_analytics", "arguments": {"post_id": str(post.id)}},
+                )
+            ),
+            content_type="application/json",
+        )
+        assert mcp.status_code == 200
+        envelope = mcp.json()
+        assert "error" not in envelope, envelope
+        mcp_body = json.loads(envelope["result"]["content"][0]["text"])
+
+        assert mcp_body == rest_body, (
+            "MCP and REST disagree on the PostAnalyticsResponse payload. "
+            "Both surfaces must call build_post_analytics — do not hand-shape one side."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Analytics permission gate — the MCP analytics tools require view_analytics,
+# same as the REST routes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def analytics_key_no_perm(db, user, owner_memberships, workspace, instagram_account):
+    """Key allowlisted on the IG account but lacking ``view_analytics``."""
+    return services.issue_api_key(
+        workspace=workspace,
+        social_accounts=[instagram_account],
+        issued_by=user,
+        name="analytics-noperm",
+        permissions=[p for p in PERMISSION_KEYS if p != "view_analytics"],
+    )
+
+
+@pytest.fixture
+def analytics_client_no_perm(analytics_key_no_perm):
+    return _SecureClient(HTTP_AUTHORIZATION=f"Bearer {analytics_key_no_perm.plaintext_token}")
+
+
+@pytest.mark.django_db
+class TestMcpAnalyticsPermissionGate:
+    def test_account_analytics_tool_requires_view_analytics(self, analytics_client_no_perm, instagram_account):
+        mcp = analytics_client_no_perm.post(
+            MCP_URL,
+            data=json.dumps(
+                _rpc(
+                    "tools/call",
+                    {"name": "get_account_analytics", "arguments": {"account_id": str(instagram_account.id)}},
+                )
+            ),
+            content_type="application/json",
+        )
+        body = mcp.json()
+        assert "error" in body, body
+        assert "permission denied" in body["error"]["message"].lower()
+
+    def test_post_analytics_tool_requires_view_analytics(self, analytics_client_no_perm, published_ig_post):
+        post, _pp = published_ig_post
+        mcp = analytics_client_no_perm.post(
+            MCP_URL,
+            data=json.dumps(
+                _rpc(
+                    "tools/call",
+                    {"name": "get_post_analytics", "arguments": {"post_id": str(post.id)}},
+                )
+            ),
+            content_type="application/json",
+        )
+        body = mcp.json()
+        assert "error" in body, body
+        assert "permission denied" in body["error"]["message"].lower()
