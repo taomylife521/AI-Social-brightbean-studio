@@ -618,6 +618,10 @@ The MCP server lives at `POST {APP_URL}/api/v1/mcp` and speaks JSON-RPC 2.0 over
 
 To connect a client (Claude Desktop, Cursor, a custom agent), point it at `{APP_URL}/api/v1/mcp` and send the Bearer token in the `Authorization` header.
 
+### Pre-built agent skill
+
+Don't want to wire up your own client? The companion [brightbean-studio-agent](https://github.com/brightbeanxyz/brightbean-studio-agent) repository hosts a holistic agent skill that drives BrightBean Studio end-to-end through the REST API and MCP tools documented above.
+
 ---
 
 ## Tech Stack
