@@ -8,8 +8,13 @@
     <link rel="icon" href="{% static 'favicon/favicon.ico' %}" sizes="any">
     <link rel="icon" type="image/svg+xml" href="{% static 'favicon/favicon.svg' %}">
 
-    {# Self-contained styling only — no external CDN. Inline <style> is permitted by
-       the site CSP (style-src 'unsafe-inline'); the logo/favicon are served from 'self'. #}
+    {% comment %}
+      Self-contained styling only — no external CDN. The inline stylesheet below is
+      permitted by the site CSP (style-src 'unsafe-inline'); the logo/favicon are
+      served from 'self'.
+      NOTE: keep multi-line notes inside a comment block like this one — Django's
+      single-line comment syntax does not span newlines and would leak verbatim.
+    {% endcomment %}
     <style>
         :root {
             /* Brand olive is hardcoded on purpose: this page is self-contained and

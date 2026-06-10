@@ -17,8 +17,10 @@
             <form id="authorizationForm" method="post">
                 {% csrf_token %}
 
-                {# Hidden fields carry redirect_uri, state, scope, response_type,
-                   code_challenge, etc. — must be rendered or the OAuth flow breaks. #}
+                {% comment %}
+                  Hidden fields carry redirect_uri, state, scope, response_type,
+                  code_challenge, etc. — must be rendered or the OAuth flow breaks.
+                {% endcomment %}
                 {% for field in form %}
                     {% if field.is_hidden %}{{ field }}{% endif %}
                 {% endfor %}

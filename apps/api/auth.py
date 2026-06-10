@@ -25,6 +25,7 @@ and never write a synthetic ``WorkspaceMembership`` row.
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,6 +37,8 @@ from ninja.security import HttpBearer
 from apps.api.limits import is_failed_auth_ip_blocked, record_failed_auth
 from apps.api_keys.models import ApiKey
 from apps.api_keys.services import TOKEN_PREFIX, touch_last_used, verify_token
+
+LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -91,7 +94,13 @@ class ApiKeyAuth(HttpBearer):
     ``@require_permission`` unchanged.
     """
 
-    def authenticate(self, request: HttpRequest, token: str) -> ApiKey | None:
+    def _pre_auth_reject(self, request: HttpRequest) -> bool:
+        """Pre-auth defenses shared by every bearer (API key OR OAuth token).
+
+        Returns True if the request must be refused — the caller returns
+        ``None`` for a uniform 401. Logs the reason (never the credential) so
+        an otherwise-opaque 401 is diagnosable from the server logs.
+        """
         # Pre-auth IP throttle — short-circuit if this IP has already burned
         # through its failed-auth budget. We do this FIRST so a brute-force
         # script doesn't get to pay only the HMAC cost per attempt past the
@@ -101,7 +110,11 @@ class ApiKeyAuth(HttpBearer):
         # throttle exists; they just see their attempts continuing to fail
         # with the same response shape they were already seeing.
         if is_failed_auth_ip_blocked(request):
-            return None
+            # DEBUG, not WARNING: this fires on every request from an
+            # already-blocked IP, so a louder level would let an attacker
+            # inflate our log volume — the opposite of the throttle's intent.
+            LOG.debug("Bearer auth rejected: client IP is throttled after repeated failed auth.")
+            return True
 
         # HTTPS guard — block plaintext bearer transmission in prod.
         # ``settings.DEBUG`` lets local development over http://127.0.0.1
@@ -110,17 +123,33 @@ class ApiKeyAuth(HttpBearer):
         # is also rate-limited (the previous behaviour leaked free 400s
         # forever, undercutting the throttle).
         if not request.is_secure() and not settings.DEBUG:
+            # WARNING: in prod, SecurityMiddleware's SSL redirect means real
+            # plain-HTTP traffic never reaches here, so a False is_secure()
+            # signals a misconfigured proxy (missing X-Forwarded-Proto) worth
+            # surfacing, not a probe.
+            LOG.warning(
+                "Bearer auth rejected: request.is_secure() is False. Behind a TLS-terminating "
+                "proxy, forward X-Forwarded-Proto: https (see SECURE_PROXY_SSL_HEADER)."
+            )
             record_failed_auth(request)
             # Generic 401 instead of a product-fingerprinting "Agent API
             # requires HTTPS" string: an attacker probing for our endpoint
             # over plain HTTP gets the same opaque response as any other
             # failed auth, denying them a pre-auth product fingerprint.
+            return True
+
+        return False
+
+    def authenticate(self, request: HttpRequest, token: str) -> ApiKey | None:
+        if self._pre_auth_reject(request):
             return None
 
         api_key = verify_token(token)
         if api_key is None:
-            # Record this attempt against the IP so the next request can
-            # be short-circuited by the check above.
+            # Record this attempt against the IP so the next request can be
+            # short-circuited by the throttle. INFO (not WARNING): an
+            # unrecognised key is the expected, adversarial-probe path.
+            LOG.info("Bearer auth rejected: API key not recognised, revoked, or expired.")
             record_failed_auth(request)
             return None
 
@@ -253,16 +282,48 @@ def _resolve_oauth_actor(token: str) -> OAuthMcpActor | None:
     column and degrades as tokens accumulate). Returns None for any missing /
     invalid / expired / wrong-scope token, or when the user has no usable
     workspace.
+
+    Each rejection is logged with its specific reason (never the token value)
+    so an opaque 401 from an MCP client is diagnosable from the server logs.
     """
     from oauth2_provider.models import get_access_token_model
 
     access_token_model = get_access_token_model()
     token_checksum = hashlib.sha256(token.encode("utf-8")).hexdigest()
     tok = access_token_model.objects.select_related("user").filter(token_checksum=token_checksum).first()
-    if tok is None or tok.user_id is None or not tok.is_valid([_MCP_OAUTH_SCOPE]):
+    if tok is None:
+        # INFO (not WARNING): an unknown bearer is the expected probe path,
+        # bounded by the IP throttle; logging it louder invites flooding.
+        LOG.info("Bearer auth rejected: no OAuth access token matches the presented bearer.")
+        return None
+    if tok.user_id is None:
+        # WARNING: a token row with no user is a data anomaly, not normal traffic.
+        LOG.warning("Bearer auth rejected: OAuth access token %s is not bound to a user.", tok.pk)
+        return None
+    # is_valid([scope]) == (not is_expired()) and allow_scopes([scope]); split so the
+    # log names whether expiry or scope was the cause.
+    if tok.is_expired():
+        # INFO: token expiry is a normal, recurring condition (clients refresh hourly).
+        LOG.info("Bearer auth rejected: OAuth access token for user %s has expired.", tok.user_id)
+        return None
+    if not tok.allow_scopes([_MCP_OAUTH_SCOPE]):
+        # INFO: a wrong-scope token is a client-side issue, not a server alarm.
+        LOG.info(
+            "Bearer auth rejected: OAuth token for user %s is missing the %r scope (granted: %r).",
+            tok.user_id,
+            _MCP_OAUTH_SCOPE,
+            tok.scope,
+        )
         return None
     membership = _resolve_active_membership(tok.user)
     if membership is None:
+        # WARNING: a valid, scoped, unexpired token whose user maps to no
+        # workspace is the genuinely anomalous case operators want to see.
+        LOG.warning(
+            "Bearer auth rejected: user %s has a valid OAuth token but no active "
+            "(non-archived) workspace membership.",
+            tok.user_id,
+        )
         return None
     return OAuthMcpActor(user=tok.user, membership=membership)
 
@@ -281,15 +342,15 @@ class McpAuth(ApiKeyAuth):
         if token.startswith(TOKEN_PREFIX):
             return super().authenticate(request, token)
 
-        # OAuth path — same pre-auth defenses as the key path.
-        if is_failed_auth_ip_blocked(request):
-            return None
-        if not request.is_secure() and not settings.DEBUG:
-            record_failed_auth(request)
+        # OAuth path — reuse the key path's pre-auth defenses (IP throttle +
+        # HTTPS guard) so both credential types share one implementation and
+        # one set of rejection logs.
+        if self._pre_auth_reject(request):
             return None
 
         actor = _resolve_oauth_actor(token)
         if actor is None:
+            # _resolve_oauth_actor has already logged the specific reason.
             record_failed_auth(request)
             return None
 
