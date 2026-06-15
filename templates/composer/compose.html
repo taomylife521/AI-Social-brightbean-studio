@@ -149,15 +149,18 @@
         box-shadow: 0 0 0 3px rgba(249,115,22,0.1);
     }
 
-    /* Media dropzone - compact inline version */
+    /* Media dropzone - square tile, first in the media row */
     .media-dropzone-inline {
+        width: 96px; height: 96px;
         border: 1.5px dashed #D6D3D1;
         border-radius: 8px;
-        padding: 8px 12px;
-        display: flex; align-items: center; gap: 8px;
+        padding: 8px;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 4px; text-align: center;
         transition: all 200ms ease;
         cursor: pointer;
-        margin: 0 16px 12px;
+        flex-shrink: 0;
     }
     .media-dropzone-inline:hover,
     .media-dropzone-inline.dragover {
@@ -165,9 +168,22 @@
         background: #FFF7ED;
     }
 
+    /* Unsplash icon button next to the dropzone - bare logo mark, no tile */
+    .media-unsplash-btn {
+        height: 96px;
+        padding: 0 6px;
+        display: flex; align-items: center; justify-content: center;
+        background: transparent; border: none;
+        color: #44403C;
+        cursor: pointer;
+        transition: color 150ms ease;
+        flex-shrink: 0;
+    }
+    .media-unsplash-btn:hover { color: #1C1917; }
+
     /* Media thumbnail grid */
     .media-thumb {
-        width: 56px; height: 56px;
+        width: 96px; height: 96px;
         border-radius: 8px;
         overflow: hidden;
         position: relative;
@@ -175,8 +191,8 @@
     }
     .media-thumb img { width: 100%; height: 100%; object-fit: cover; }
     .media-thumb .remove-btn {
-        position: absolute; top: 3px; right: 3px;
-        width: 18px; height: 18px; border-radius: 50%;
+        position: absolute; top: 4px; right: 4px;
+        width: 20px; height: 20px; border-radius: 50%;
         background: rgba(0,0,0,0.55); color: white;
         display: flex; align-items: center; justify-content: center;
         font-size: 10px; cursor: pointer;
@@ -437,26 +453,33 @@
                                   @input="debouncedPreviewUpdate()"
                                   rows="7">{{ form.caption.value|default:"" }}</textarea>
 
-                        <!-- Attached media thumbnails (inside caption area) -->
-                        <div id="media-list" class="flex flex-wrap gap-2 px-4 pb-2">
-                            {% if post %}
-                                {% include "composer/partials/media_list.html" %}
-                            {% elif pending_assets %}
-                                {% include "composer/partials/media_list_pending.html" %}
+                        <!-- Media row: dropzone tile + Unsplash tile + attached thumbnails -->
+                        <div class="flex flex-wrap items-start gap-2 px-4 pb-3">
+                            <input type="file" x-ref="fileInput" class="hidden" multiple
+                                   accept="image/*,video/*"
+                                   @change="handleFileSelect($event)">
+                            <div class="media-dropzone-inline"
+                                 @dragover.prevent="$el.classList.add('dragover')"
+                                 @dragleave="$el.classList.remove('dragover')"
+                                 @drop.prevent="handleFileDrop($event); $el.classList.remove('dragover')"
+                                 @click="$refs.fileInput.click()">
+                                <svg class="w-6 h-6 text-stone-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                                <span class="text-[11px] text-stone-400 leading-tight">Drag & drop or <span class="text-orange-500 font-medium">select files</span></span>
+                            </div>
+                            {% if unsplash_enabled %}
+                            <button type="button" class="media-unsplash-btn" title="Search Unsplash"
+                                    @click="openUnsplashModal()">
+                                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7.5 6.75V0h9v6.75h-9zm9 3.75H24V24H0V10.5h7.5v6.75h9V10.5z"/></svg>
+                            </button>
                             {% endif %}
-                        </div>
-
-                        <!-- Inline media dropzone -->
-                        <input type="file" x-ref="fileInput" class="hidden" multiple
-                               accept="image/*,video/*"
-                               @change="handleFileSelect($event)">
-                        <div class="media-dropzone-inline"
-                             @dragover.prevent="$el.classList.add('dragover')"
-                             @dragleave="$el.classList.remove('dragover')"
-                             @drop.prevent="handleFileDrop($event); $el.classList.remove('dragover')"
-                             @click="$refs.fileInput.click()">
-                            <svg class="w-5 h-5 text-stone-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                            <span class="text-xs text-stone-400">Drag & drop or <span class="text-orange-500 font-medium">select files</span></span>
+                            <!-- display:contents keeps appended thumbs flowing in this row -->
+                            <div id="media-list" class="contents">
+                                {% if post %}
+                                    {% include "composer/partials/media_list.html" %}
+                                {% elif pending_assets %}
+                                    {% include "composer/partials/media_list_pending.html" %}
+                                {% endif %}
+                            </div>
                         </div>
 
                         <!-- Bottom bar: media library + char counter -->
@@ -630,47 +653,46 @@
                             <input type="hidden"
                                    :name="'yt_thumbnail_asset_id_' + accId"
                                    :value="platformExtras[accId]?.thumbnail_asset_id || ''">
-                            <template x-if="platformExtras[accId]?.thumbnail_url">
-                                <div class="mb-2">
-                                    <img :src="platformExtras[accId].thumbnail_url"
-                                         class="w-full max-w-[240px] aspect-video object-cover rounded-lg border border-stone-200">
-                                </div>
-                            </template>
-                            <template x-if="!platformExtras[accId]?.thumbnail_url">
-                                <div class="mb-2 w-full max-w-[240px] aspect-video rounded-lg border-2 border-dashed border-stone-200 bg-stone-50 flex flex-col items-center justify-center gap-1 cursor-pointer hover:border-orange-300 hover:bg-orange-50 transition-colors"
-                                     @click="triggerThumbnailUpload(accId)">
-                                    <svg class="w-6 h-6 text-stone-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                                    <span class="text-[11px] text-stone-400">Click to upload thumbnail</span>
-                                </div>
-                            </template>
-                            <div class="flex items-center gap-2">
-                                <button type="button"
-                                        @click="openThumbnailPicker(accId)"
-                                        class="text-xs font-medium px-3 py-1.5 rounded-lg border border-stone-200 text-stone-700 hover:border-orange-400 hover:text-orange-600 transition-all cursor-pointer">
-                                    <span x-text="platformExtras[accId]?.thumbnail_asset_id ? 'Change' : 'Pick from Library'"></span>
-                                </button>
-                                <button type="button"
-                                        @click="triggerThumbnailUpload(accId)"
-                                        :disabled="thumbnailUploading[accId]"
-                                        class="text-xs font-medium px-3 py-1.5 rounded-lg border border-stone-200 text-stone-700 hover:border-orange-400 hover:text-orange-600 transition-all disabled:opacity-50 cursor-pointer">
-                                    <span x-text="thumbnailUploading[accId] ? 'Uploading…' : 'Upload'"></span>
-                                </button>
-                                <input type="file"
-                                       :data-thumb-upload-for="accId"
-                                       accept="image/jpeg,image/png"
-                                       class="hidden thumb-upload-input"
-                                       @change="uploadThumbnail(accId, $event)">
-                                <button type="button"
-                                        x-show="platformExtras[accId]?.thumbnail_asset_id"
-                                        @click="clearThumbnail(accId)"
-                                        class="text-xs text-stone-400 hover:text-red-500 cursor-pointer">Remove</button>
+                            <div class="flex items-stretch gap-3">
+                                {% include "composer/partials/choose_from_video_card.html" with mode="upload" %}
+                                <template x-if="!platformExtras[accId]?.thumbnail_url">
+                                    <div class="flex-1 max-w-[480px] rounded-lg border-2 border-dashed border-stone-200 bg-stone-50 flex flex-col items-center justify-center gap-1 cursor-pointer hover:border-orange-300 hover:bg-orange-50 transition-colors min-h-[104px]"
+                                         @dragover.prevent="$el.classList.add('border-orange-400', 'bg-orange-50')"
+                                         @dragleave="$el.classList.remove('border-orange-400', 'bg-orange-50')"
+                                         @drop.prevent="handleThumbnailDrop(accId, $event); $el.classList.remove('border-orange-400', 'bg-orange-50')"
+                                         @click="triggerThumbnailUpload(accId)">
+                                        <svg class="w-6 h-6 text-stone-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                                        <span class="text-[11px] text-stone-400" x-text="thumbnailUploading[accId] ? 'Uploading…' : 'Drag & drop a thumbnail'"></span>
+                                    </div>
+                                </template>
+                                <template x-if="platformExtras[accId]?.thumbnail_url">
+                                    <div class="relative flex-shrink-0">
+                                        <img :src="platformExtras[accId].thumbnail_url"
+                                             class="h-[104px] w-auto max-w-[480px] object-cover rounded-lg border border-stone-200">
+                                        <button type="button" @click="clearThumbnail(accId)"
+                                                title="Remove thumbnail"
+                                                class="absolute top-2 right-2 w-6 h-6 rounded-full bg-black/55 hover:bg-red-500 text-white flex items-center justify-center transition-colors cursor-pointer">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12"/></svg>
+                                        </button>
+                                    </div>
+                                </template>
                             </div>
+                            <input type="file"
+                                   :data-thumb-upload-for="accId"
+                                   accept="image/jpeg,image/png"
+                                   class="hidden thumb-upload-input"
+                                   @change="uploadThumbnail(accId, $event)">
+                            <button type="button" @click="openThumbnailPicker(accId)"
+                                    class="mt-2 text-xs font-medium text-stone-400 hover:text-orange-600 transition-colors flex items-center gap-1.5 cursor-pointer">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                                Media Library
+                            </button>
                         </div>
                         <!-- Visibility -->
                         <div>
                             <label class="block text-[11px] font-semibold text-stone-400 uppercase tracking-wider mb-1">Visibility</label>
                             <select :name="'yt_privacy_status_' + accId"
-                                    class="w-full text-sm px-3 py-2 rounded-lg border border-stone-200 bg-white outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-100 transition-all">
+                                    class="bb-select w-full text-sm px-3 py-2 rounded-lg border border-stone-200 bg-white outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-100 transition-all">
                                 <option value="public" :selected="(platformExtras[accId]?.privacy_status || 'public') === 'public'">Public</option>
                                 <option value="unlisted" :selected="platformExtras[accId]?.privacy_status === 'unlisted'">Unlisted</option>
                                 <option value="private" :selected="platformExtras[accId]?.privacy_status === 'private'">Private</option>
@@ -794,6 +816,38 @@
                                 This TikTok app hasn't passed TikTok's content audit yet — only private posting ("Only you") is available until the audit is approved.
                             </p>
                             <p x-show="ttBrandContent" class="text-[11px] text-stone-400 mt-1">Branded content can't be set to "Only you".</p>
+                        </div>
+                        <!-- Cover: TikTok takes a frame timestamp, not an uploaded image -->
+                        <div>
+                            <label class="block text-[11px] font-semibold text-stone-400 uppercase tracking-wider mb-1.5">Cover</label>
+                            <input type="hidden"
+                                   :name="'tiktok_video_cover_timestamp_ms_' + accId"
+                                   :value="platformExtras[accId]?.video_cover_timestamp_ms ?? ''">
+                            <div class="flex items-stretch gap-3">
+                                {% include "composer/partials/choose_from_video_card.html" with mode="timestamp" %}
+                                <template x-if="tiktokCoverPreview[accId]">
+                                    <div class="relative flex-shrink-0">
+                                        <img :src="tiktokCoverPreview[accId]"
+                                             class="h-[104px] w-auto max-w-[480px] object-cover rounded-lg border border-stone-200">
+                                        <button type="button" @click="clearTiktokCover(accId)"
+                                                title="Reset to default cover"
+                                                class="absolute top-2 right-2 w-6 h-6 rounded-full bg-black/55 hover:bg-red-500 text-white flex items-center justify-center transition-colors cursor-pointer">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12"/></svg>
+                                        </button>
+                                    </div>
+                                </template>
+                                <template x-if="!tiktokCoverPreview[accId] && (platformExtras[accId]?.video_cover_timestamp_ms ?? null) !== null">
+                                    <div class="relative flex-1 max-w-[480px] rounded-lg border border-stone-200 bg-stone-50 flex items-center justify-center min-h-[104px]">
+                                        <span class="text-xs text-stone-500 font-medium tabular-nums"
+                                              x-text="'Cover at ' + formatTimecode((platformExtras[accId]?.video_cover_timestamp_ms || 0) / 1000)"></span>
+                                        <button type="button" @click="clearTiktokCover(accId)"
+                                                title="Reset to default cover"
+                                                class="absolute top-2 right-2 w-6 h-6 rounded-full bg-black/55 hover:bg-red-500 text-white flex items-center justify-center transition-colors cursor-pointer">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12"/></svg>
+                                        </button>
+                                    </div>
+                                </template>
+                            </div>
                         </div>
                         <!-- Interaction abilities -->
                         <div>
@@ -1459,6 +1513,175 @@
         </div>
     </div>
 
+    <!-- ════════════════════════════════════════════════════════════
+         UNSPLASH SEARCH MODAL (only rendered when an API key is configured)
+         ════════════════════════════════════════════════════════════ -->
+    {% if unsplash_enabled %}
+    <div x-show="showUnsplashModal" x-cloak
+         class="fixed inset-0 z-[60] flex items-center justify-center"
+         @keydown.escape.window="showUnsplashModal && closeUnsplashModal()"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0">
+        <div class="absolute inset-0 bg-stone-900/40 backdrop-blur-sm" @click="closeUnsplashModal()"></div>
+        <div class="relative bg-white rounded-2xl shadow-xl border border-stone-200 w-[calc(100vw-1rem)] sm:w-[760px] mx-2 sm:mx-0 h-[640px] max-h-[85vh] flex flex-col overflow-hidden"
+             x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0 scale-95"
+             x-transition:enter-end="opacity-100 scale-100">
+            <div class="px-4 sm:px-6 py-4 border-b border-stone-100 flex items-center gap-3">
+                <span class="w-9 h-9 rounded-lg bg-stone-900 text-white flex items-center justify-center flex-shrink-0">
+                    <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7.5 6.75V0h9v6.75h-9zm9 3.75H24V24H0V10.5h7.5v6.75h9V10.5z"/></svg>
+                </span>
+                <div class="min-w-0">
+                    <h2 class="text-base font-semibold text-stone-900">Search Unsplash</h2>
+                    <p class="text-xs text-stone-400 truncate">Free high-resolution photos &middot; add one or many</p>
+                </div>
+                <button @click="closeUnsplashModal()"
+                        class="ml-auto w-8 h-8 rounded-lg border border-stone-200 text-stone-400 hover:text-stone-600 hover:border-stone-300 flex items-center justify-center transition-all duration-150 cursor-pointer flex-shrink-0">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="px-4 sm:px-6 pt-4 space-y-3 flex-shrink-0">
+                <div class="flex items-center gap-2 rounded-xl border-2 border-orange-400/70 focus-within:border-orange-500 transition-colors pl-4 pr-1.5 py-1.5">
+                    <svg class="w-4 h-4 text-stone-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                    <input type="text" x-model="unsplashQuery"
+                           @keydown.enter.prevent="unsplashActiveChip = ''; searchUnsplash()"
+                           placeholder="Search free high-resolution photos…"
+                           class="flex-1 text-sm bg-transparent outline-none border-none placeholder-stone-400 text-stone-900">
+                    <button type="button" @click="unsplashActiveChip = ''; searchUnsplash()"
+                            class="px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold transition-colors cursor-pointer flex-shrink-0">Search</button>
+                </div>
+                <div class="flex flex-wrap gap-1.5">
+                    <template x-for="chip in unsplashChips" :key="chip">
+                        <button type="button" @click="selectUnsplashChip(chip)"
+                                class="px-3 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer"
+                                :class="unsplashActiveChip === chip ? 'bg-stone-900 text-white' : 'border border-stone-200 text-stone-600 hover:border-stone-300 hover:bg-stone-50'"
+                                x-text="chip"></button>
+                    </template>
+                </div>
+            </div>
+            <div class="flex-1 overflow-y-auto px-4 sm:px-6 pb-4 mt-3 min-h-0">
+                <div x-show="unsplashLoading" class="flex items-center justify-center py-12 text-stone-400">
+                    <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                </div>
+                <div x-show="!unsplashLoading && unsplashError" class="py-12 text-center text-sm text-stone-500" x-text="unsplashError"></div>
+                <div x-show="!unsplashLoading && !unsplashError && !unsplashResults.length" class="py-12 text-center text-sm text-stone-400">
+                    No results. Try another search.
+                </div>
+                <div x-show="!unsplashLoading && !unsplashError" class="columns-2 sm:columns-3 gap-3">
+                    <template x-for="photo in unsplashResults" :key="photo.id">
+                        <div class="mb-3 break-inside-avoid relative rounded-lg overflow-hidden cursor-pointer group"
+                             :class="unsplashSelected[photo.id] ? 'ring-2 ring-inset ring-orange-500' : ''"
+                             @click="toggleUnsplashSelect(photo)">
+                            <img :src="photo.thumb" :alt="photo.alt" loading="lazy"
+                                 class="w-full block" :style="photo.color ? `background:${photo.color}` : ''">
+                            <span class="absolute top-2 right-2 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all"
+                                  :class="unsplashSelected[photo.id] ? 'bg-orange-500 border-orange-500' : 'bg-black/25 border-white/90'">
+                                <svg x-show="unsplashSelected[photo.id]" class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                            </span>
+                            <span class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 pt-4 pb-1.5 text-[10px] text-white truncate opacity-0 group-hover:opacity-100 transition-opacity"
+                                  x-text="photo.photographer + ' / Unsplash'"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+            <div class="px-4 sm:px-6 py-4 border-t border-stone-100 flex items-center gap-3 flex-shrink-0">
+                <span class="text-sm text-stone-400"
+                      x-text="unsplashSelectedCount ? unsplashSelectedCount + (unsplashSelectedCount === 1 ? ' photo selected' : ' photos selected') : 'Select photos to add'"></span>
+                <div class="ml-auto flex items-center gap-2">
+                    <button type="button" @click="closeUnsplashModal()"
+                            class="px-4 py-2 rounded-lg text-sm font-semibold text-stone-600 hover:text-stone-900 transition-colors cursor-pointer">Cancel</button>
+                    <button type="button"
+                            :disabled="!unsplashSelectedCount || unsplashImporting"
+                            @click="importUnsplashPhotos()"
+                            class="px-5 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                            x-text="unsplashImporting ? 'Adding…' : (unsplashSelectedCount > 1 ? 'Add ' + unsplashSelectedCount + ' images' : 'Add images')"></button>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- ════════════════════════════════════════════════════════════
+         FRAME PICKER MODAL (YouTube thumbnail / TikTok cover)
+         ════════════════════════════════════════════════════════════ -->
+    <div x-show="showFramePicker" x-cloak
+         class="fixed inset-0 z-[60] flex items-center justify-center"
+         @keydown.escape.window="showFramePicker && closeFramePicker()"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0">
+        <div class="absolute inset-0 bg-stone-900/40 backdrop-blur-sm" @click="closeFramePicker()"></div>
+        <div class="relative bg-white rounded-2xl shadow-xl border border-stone-200 w-[calc(100vw-1rem)] sm:w-[720px] mx-2 sm:mx-0 max-h-[90vh] flex flex-col overflow-hidden"
+             x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0 scale-95"
+             x-transition:enter-end="opacity-100 scale-100">
+            <div class="px-4 sm:px-6 py-4 border-b border-stone-100 flex items-center justify-between">
+                <div>
+                    <h2 class="text-base font-semibold text-stone-900">Choose thumbnail from video</h2>
+                    <p class="text-xs text-stone-400">Scrub to the frame you want, then grab it</p>
+                </div>
+                <button @click="closeFramePicker()"
+                        class="w-8 h-8 rounded-lg border border-stone-200 text-stone-400 hover:text-stone-600 hover:border-stone-300 flex items-center justify-center transition-all duration-150 cursor-pointer flex-shrink-0">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-3">
+                <div class="relative bg-black rounded-xl overflow-hidden aspect-video">
+                    <video x-ref="frameVideo"
+                           :src="frameVideoUrl"
+                           class="w-full h-full object-contain"
+                           muted playsinline preload="metadata"
+                           @loadedmetadata="frameDuration = $el.duration"
+                           @timeupdate="frameCurrentTime = $el.currentTime"></video>
+                    <span class="absolute top-3 right-3 px-2 py-1 rounded bg-black/70 text-white text-xs font-mono tabular-nums"
+                          x-text="formatTimecode(frameCurrentTime) + ' / ' + formatTimecode(frameDuration)"></span>
+                </div>
+                <input type="range" min="0" :max="frameDuration || 0" step="0.04"
+                       :value="frameCurrentTime"
+                       @input="frameCurrentTime = parseFloat($event.target.value); if ($refs.frameVideo) $refs.frameVideo.currentTime = frameCurrentTime"
+                       class="w-full accent-orange-500 cursor-pointer">
+                <div x-show="filmstripLoading" class="flex items-center justify-center py-3 text-stone-400">
+                    <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                </div>
+                <p x-show="!filmstripLoading && filmstripError" class="text-[11px] text-stone-400 text-center" x-text="filmstripError"></p>
+                <div x-show="filmstrip.length" class="flex gap-1.5 overflow-x-auto pb-1">
+                    <template x-for="(frame, idx) in filmstrip" :key="idx">
+                        <button type="button"
+                                class="flex-shrink-0 rounded-md overflow-hidden border-2 transition-colors cursor-pointer"
+                                :class="Math.abs(frameCurrentTime - frame.time) < (frameDuration / 16) ? 'border-orange-500' : 'border-transparent hover:border-orange-300'"
+                                @click="frameCurrentTime = frame.time; if ($refs.frameVideo) $refs.frameVideo.currentTime = frame.time">
+                            <img :src="frame.dataUrl" class="w-[76px] aspect-video object-cover block" :alt="'Frame at ' + formatTimecode(frame.time)">
+                        </button>
+                    </template>
+                </div>
+            </div>
+            <div class="px-4 sm:px-6 py-4 border-t border-stone-100 flex items-center gap-3 flex-shrink-0">
+                <p x-show="frameError" class="text-xs text-red-500 flex-1" x-text="frameError"></p>
+                <span x-show="!frameError" class="text-sm text-stone-400">
+                    Frame at <span class="font-mono font-semibold text-stone-700 tabular-nums" x-text="formatTimecode(frameCurrentTime)"></span>
+                </span>
+                <div class="ml-auto flex items-center gap-2">
+                    <button type="button" @click="closeFramePicker()"
+                            class="px-4 py-2 rounded-lg text-sm font-semibold text-stone-600 hover:text-stone-900 transition-colors cursor-pointer">Cancel</button>
+                    <button type="button"
+                            :disabled="frameCapturing"
+                            @click="captureFrame()"
+                            class="px-5 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5">
+                        <svg x-show="!frameCapturing" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                        <span x-text="frameCapturing ? 'Saving…' : 'Use this frame'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Save toast -->
     <div class="toast-saved" x-show="showSaveToast" x-cloak
          x-transition:enter="transition ease-out duration-300"
@@ -1578,6 +1801,38 @@ function composerApp() {
         autosavedPostId: '{{ post.id|default:"" }}',
         mediaItems: JSON.parse(document.getElementById('composer-media-items').textContent),
 
+        // Unsplash search modal
+        showUnsplashModal: false,
+        unsplashChips: ['Coffee', 'Nature', 'Food', 'City', 'People', 'Minimal', 'Workspace', 'Travel', 'Texture', 'Flowers'],
+        unsplashQuery: '',
+        unsplashActiveChip: '',
+        unsplashResults: [],
+        unsplashSelected: {},
+        unsplashLoading: false,
+        unsplashError: '',
+        unsplashImporting: false,
+        get unsplashSelectedCount() { return Object.keys(this.unsplashSelected).length; },
+
+        // Frame picker (YouTube thumbnail upload / TikTok cover timestamp)
+        hasVideoAttached: false,
+        showFramePicker: false,
+        framePickerAccId: null,
+        framePickerMode: 'upload',
+        tiktokCoverPreview: {},
+        frameAssetId: null,
+        frameVideoUrl: '',
+        frameVideoCors: false,
+        frameDuration: 0,
+        frameCurrentTime: 0,
+        filmstrip: [],
+        filmstripLoading: false,
+        filmstripError: '',
+        frameCapturing: false,
+        frameError: '',
+        // Declared here so scoped writes (inside x-for panels) hit this
+        // component instead of the iteration scope.
+        _filmstripRun: 0,
+
         // Computed-like getters for title field visibility
         get anyPlatformNeedsTitle() {
             return this.selectedAccounts.some(id => this.charLimits[id]?.needs_title);
@@ -1678,6 +1933,19 @@ function composerApp() {
                     this.uploadUrl = `/workspace/{{ workspace.id }}/compose/${detail.postId}/upload-media/`;
                 }
             });
+
+            // Track whether a video is attached (enables "Choose from video").
+            // #media-list mutates outside Alpine, so poll it on the events that
+            // change it: previewUpdate fires after uploads/imports, and htmx
+            // swaps #media-list when media is removed.
+            const syncVideoAttached = () => {
+                this.hasVideoAttached = !!document.querySelector('#media-list video');
+            };
+            this.$nextTick(syncVideoAttached);
+            document.body.addEventListener('previewUpdate', syncVideoAttached);
+            document.body.addEventListener('htmx:afterSwap', (e) => {
+                if (e.target && e.target.id === 'media-list') syncVideoAttached();
+            });
         },
 
         toggleAccount(id) {
@@ -1736,11 +2004,26 @@ function composerApp() {
                 setTimeout(() => { this.formError = ''; }, 4000);
                 return;
             }
+            this._uploadThumbnailBlob(accId, file);
+        },
+
+        handleThumbnailDrop(accId, event) {
+            const file = event.dataTransfer.files && event.dataTransfer.files[0];
+            if (!file) return;
+            if (!file.type.startsWith('image/')) {
+                this.formError = 'Thumbnail must be an image (JPG or PNG).';
+                setTimeout(() => { this.formError = ''; }, 4000);
+                return;
+            }
+            this._uploadThumbnailBlob(accId, file);
+        },
+
+        _uploadThumbnailBlob(accId, fileOrBlob, filename) {
             this.thumbnailUploading[accId] = true;
             const fd = new FormData();
-            fd.append('file', file);
+            fd.append('file', fileOrBlob, filename || fileOrBlob.name);
             const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
-            fetch('{% url "composer:thumbnail_upload" workspace_id=workspace.id %}', {
+            return fetch('{% url "composer:thumbnail_upload" workspace_id=workspace.id %}', {
                 method: 'POST',
                 headers: { 'X-CSRFToken': csrf },
                 body: fd,
@@ -1750,14 +2033,357 @@ function composerApp() {
                     if (!this.platformExtras[accId]) this.platformExtras[accId] = {};
                     this.platformExtras[accId].thumbnail_asset_id = data.asset_id;
                     this.platformExtras[accId].thumbnail_url = data.url;
+                    return data;
                 })
                 .catch(err => {
                     this.formError = (err && err.error) || 'Thumbnail upload failed.';
                     setTimeout(() => { this.formError = ''; }, 4000);
+                    return Promise.reject(err);
                 })
                 .finally(() => {
                     this.thumbnailUploading[accId] = false;
                 });
+        },
+
+        // Point every selected YouTube account's thumbnail at a freshly added
+        // image. Shared by the file-upload and Unsplash-import paths.
+        _applyYoutubeThumbnail(assetId, url) {
+            if (!assetId || !url) return;
+            this.selectedAccounts.forEach(accId => {
+                if (this.charLimits[accId]?.platform === 'youtube') {
+                    if (!this.platformExtras[accId]) this.platformExtras[accId] = {};
+                    this.platformExtras[accId].thumbnail_asset_id = assetId;
+                    this.platformExtras[accId].thumbnail_url = url;
+                }
+            });
+        },
+
+        // ── Unsplash ────────────────────────────────────────────────
+        openUnsplashModal() {
+            this.showUnsplashModal = true;
+            if (!this.unsplashResults.length && !this.unsplashLoading) {
+                this.selectUnsplashChip(this.unsplashChips[0]);
+            }
+        },
+
+        closeUnsplashModal() {
+            this.showUnsplashModal = false;
+            this.unsplashSelected = {};
+            this.unsplashError = '';
+            this.unsplashImporting = false;
+        },
+
+        selectUnsplashChip(chip) {
+            this.unsplashActiveChip = chip;
+            this.unsplashQuery = chip;
+            this.searchUnsplash();
+        },
+
+        searchUnsplash() {
+            const query = this.unsplashQuery.trim();
+            if (!query) return;
+            this.unsplashLoading = true;
+            this.unsplashError = '';
+            this.unsplashSelected = {};
+            fetch('{% url "composer:unsplash_search" workspace_id=workspace.id %}?q=' + encodeURIComponent(query))
+                .then(r => r.json().then(data => ({ ok: r.ok, data })))
+                .then(({ ok, data }) => {
+                    if (!ok) {
+                        this.unsplashResults = [];
+                        this.unsplashError = data.error || 'Unsplash search failed.';
+                        return;
+                    }
+                    this.unsplashResults = data.results || [];
+                })
+                .catch(() => {
+                    this.unsplashResults = [];
+                    this.unsplashError = 'Unsplash search failed. Try again.';
+                })
+                .finally(() => { this.unsplashLoading = false; });
+        },
+
+        toggleUnsplashSelect(photo) {
+            if (this.unsplashSelected[photo.id]) {
+                delete this.unsplashSelected[photo.id];
+            } else {
+                this.unsplashSelected[photo.id] = photo;
+            }
+        },
+
+        importUnsplashPhotos() {
+            if (!this.unsplashSelectedCount || this.unsplashImporting) return;
+            // Same rule as file uploads: a post holds one video OR images.
+            if (document.querySelector('#media-list video')) {
+                this.unsplashError = 'You cannot mix images and video in one post.';
+                return;
+            }
+            this.unsplashImporting = true;
+            this.unsplashError = '';
+            const url = this.autosavedPostId
+                ? `/workspace/{{ workspace.id }}/compose/${this.autosavedPostId}/unsplash-import/`
+                : '{% url "composer:unsplash_import" workspace_id=workspace.id %}';
+            const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+            fetch(url, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrf, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ photos: Object.values(this.unsplashSelected) }),
+            })
+                .then(r => r.json().then(data => ({ ok: r.ok, data })))
+                .then(({ ok, data }) => {
+                    if (!ok) {
+                        this.unsplashError = data.error || 'Import failed. Try again.';
+                        return;
+                    }
+                    const list = document.getElementById('media-list');
+                    list.insertAdjacentHTML('beforeend', data.html);
+                    if (window.htmx) window.htmx.process(list);
+                    // Mirror uploadFile: latest imported image becomes the
+                    // YouTube thumbnail for selected YouTube accounts.
+                    const assets = data.assets || [];
+                    const last = assets[assets.length - 1];
+                    if (last) this._applyYoutubeThumbnail(last.id, last.url);
+                    this.triggerPreviewUpdate();
+                    this.closeUnsplashModal();
+                })
+                .catch(() => { this.unsplashError = 'Import failed. Try again.'; })
+                .finally(() => { this.unsplashImporting = false; });
+        },
+
+        // ── Frame picker ────────────────────────────────────────────
+        formatTimecode(seconds) {
+            const s = Math.max(0, Math.floor(seconds || 0));
+            const h = String(Math.floor(s / 3600)).padStart(2, '0');
+            const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+            const sec = String(s % 60).padStart(2, '0');
+            return `${h}:${m}:${sec}`;
+        },
+
+        openFramePicker(accId, mode = 'upload') {
+            const attached = document.querySelector('#media-list video');
+            if (!attached) return;
+            // Prefer the same-origin stream: S3/R2 signed URLs are cross-origin
+            // and (without bucket CORS) would taint the capture canvas.
+            const assetId = attached.dataset.assetId;
+            this.frameAssetId = assetId || null;
+            const url = assetId
+                ? `/workspace/{{ workspace.id }}/compose/media-stream/${assetId}/`
+                : attached.getAttribute('src').split('#')[0];
+            this.frameVideoUrl = url;
+            // crossorigin only helps when the file is actually cross-origin
+            // (e.g. S3); on same-origin media it is unnecessary.
+            this.frameVideoCors = new URL(url, location.href).origin !== location.origin;
+            this.framePickerAccId = accId;
+            this.framePickerMode = mode;
+            this.frameDuration = 0;
+            this.frameCurrentTime = 0;
+            this.filmstrip = [];
+            this.filmstripError = '';
+            this.frameError = '';
+            this.showFramePicker = true;
+            this.$nextTick(() => {
+                const v = this.$refs.frameVideo;
+                if (v && this.frameVideoCors) v.setAttribute('crossorigin', 'anonymous');
+                // Reopening keeps the loaded video, so loadedmetadata won't
+                // re-fire - sync duration/position from the element directly.
+                if (v && v.readyState >= 1) {
+                    this.frameDuration = v.duration;
+                    this.frameCurrentTime = v.currentTime;
+                }
+                this._generateFilmstrip();
+            });
+        },
+
+        closeFramePicker() {
+            this.showFramePicker = false;
+            this.framePickerAccId = null;
+            this._filmstripRun = (this._filmstripRun || 0) + 1;
+            const v = this.$refs && this.$refs.frameVideo;
+            if (v) v.pause();
+        },
+
+        _generateFilmstrip() {
+            // Token cancels in-flight generation when the picker is closed or
+            // reopened, so a slow run can't append stale frames.
+            const run = (this._filmstripRun = (this._filmstripRun || 0) + 1);
+            this.filmstrip = [];
+            this.filmstripError = '';
+            this.filmstripLoading = true;
+
+            // Fast path: let the server extract frames with ffmpeg (it seeks
+            // each frame via byte ranges, so we only download ~8 small JPEGs).
+            // Fall back to client-side extraction if it's unavailable.
+            if (this.frameAssetId) {
+                fetch(`/workspace/{{ workspace.id }}/compose/media-filmstrip/${this.frameAssetId}/`)
+                    .then(r => r.ok ? r.json() : Promise.reject(r))
+                    .then(data => {
+                        if (run !== this._filmstripRun) return;
+                        if (data.frames && data.frames.length) {
+                            this.filmstrip = data.frames;
+                            this.filmstripLoading = false;
+                        } else {
+                            this._generateFilmstripClient(run);
+                        }
+                    })
+                    .catch(() => {
+                        if (run !== this._filmstripRun) return;
+                        this._generateFilmstripClient(run);
+                    });
+                return;
+            }
+            this._generateFilmstripClient(run);
+        },
+
+        _generateFilmstripClient(run) {
+            const url = this.frameVideoUrl;
+            const cors = this.frameVideoCors;
+            const COUNT = 8;
+            const CONCURRENCY = 4;
+            const cancelled = () => run !== this._filmstripRun;
+
+            // preload="metadata" (not "auto") so a worker only fetches the byte
+            // ranges its seeks actually need instead of buffering the whole file.
+            const newVideo = () => {
+                const v = document.createElement('video');
+                v.muted = true;
+                v.preload = 'metadata';
+                v.playsInline = true;
+                if (cors) v.crossOrigin = 'anonymous';
+                v.src = url;
+                return v;
+            };
+            const ready = (v) => new Promise((resolve, reject) => {
+                if (v.readyState >= 1) return resolve();
+                v.addEventListener('loadedmetadata', () => resolve(), { once: true });
+                v.addEventListener('error', () => reject(new Error('load failed')), { once: true });
+            });
+            const seekGrab = (v, t) => new Promise((resolve, reject) => {
+                v.addEventListener('seeked', () => {
+                    try {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = 160;
+                        canvas.height = 90;
+                        canvas.getContext('2d').drawImage(v, 0, 0, 160, 90);
+                        // toDataURL throws SecurityError on a tainted canvas
+                        resolve(canvas.toDataURL('image/jpeg', 0.6));
+                    } catch (e) {
+                        reject(e);
+                    }
+                }, { once: true });
+                v.addEventListener('error', () => reject(new Error('seek failed')), { once: true });
+                v.currentTime = t;
+            });
+
+            // Prime one element to learn the duration, then fan out a pool of
+            // workers that each own a video element and pull timestamps from a
+            // shared cursor. Because seeks fetch via byte ranges, running a few
+            // in parallel overlaps their round-trips instead of doing all 8
+            // back-to-back.
+            const primer = newVideo();
+            ready(primer)
+                .then(async () => {
+                    if (cancelled()) return;
+                    const duration = primer.duration || this.frameDuration || 0;
+                    const times = Array.from({ length: COUNT }, (_, i) => duration * (i + 0.5) / COUNT);
+                    const results = new Array(COUNT);
+                    let cursor = 0;
+                    let fatal = false;
+
+                    const worker = async (v, alreadyReady) => {
+                        if (!alreadyReady) await ready(v);
+                        while (!cancelled() && cursor < times.length && !fatal) {
+                            const i = cursor++;
+                            try {
+                                results[i] = { time: times[i], dataUrl: await seekGrab(v, times[i]) };
+                            } catch (e) {
+                                fatal = true;
+                            }
+                        }
+                        v.removeAttribute('src');
+                        v.load();
+                    };
+
+                    const pool = [worker(primer, true)];
+                    for (let i = 1; i < Math.min(CONCURRENCY, COUNT); i++) {
+                        pool.push(worker(newVideo(), false));
+                    }
+                    await Promise.all(pool);
+                    if (cancelled()) return;
+
+                    const frames = results.filter(Boolean);
+                    if (!frames.length) {
+                        this.filmstripError = 'Frame previews unavailable for this video — use the scrubber instead.';
+                    } else {
+                        this.filmstrip = frames;
+                    }
+                    this.filmstripLoading = false;
+                })
+                .catch(() => {
+                    if (cancelled()) return;
+                    this.filmstripLoading = false;
+                    this.filmstripError = 'Could not load video frames.';
+                });
+        },
+
+        captureFrame() {
+            const v = this.$refs.frameVideo;
+            if (!v || !v.videoWidth) {
+                this.frameError = 'Video is still loading — try again in a moment.';
+                return;
+            }
+            v.pause();
+            this.frameCapturing = true;
+            this.frameError = '';
+            const accId = this.framePickerAccId;
+            const canvas = document.createElement('canvas');
+            canvas.width = v.videoWidth;
+            canvas.height = v.videoHeight;
+            try {
+                canvas.getContext('2d').drawImage(v, 0, 0);
+                if (this.framePickerMode === 'timestamp') {
+                    // TikTok: the API picks the cover by timestamp; the capture
+                    // is only a local preview. Downscale it before storing in
+                    // reactive state so a 4K frame isn't held as a multi-MB
+                    // data URL for the rest of the session.
+                    if (!this.platformExtras[accId]) this.platformExtras[accId] = {};
+                    this.platformExtras[accId].video_cover_timestamp_ms = Math.round(v.currentTime * 1000);
+                    try {
+                        const pw = 480;
+                        const ph = Math.round(pw * (v.videoHeight / v.videoWidth));
+                        const pc = document.createElement('canvas');
+                        pc.width = pw;
+                        pc.height = ph;
+                        pc.getContext('2d').drawImage(v, 0, 0, pw, ph);
+                        this.tiktokCoverPreview[accId] = pc.toDataURL('image/jpeg', 0.7);
+                    } catch (e) {
+                        delete this.tiktokCoverPreview[accId];
+                    }
+                    this.frameCapturing = false;
+                    this.closeFramePicker();
+                    return;
+                }
+                canvas.toBlob((blob) => {
+                    if (!blob) {
+                        this.frameCapturing = false;
+                        this.frameError = 'Could not capture this frame.';
+                        return;
+                    }
+                    const name = 'video-frame-' + this.formatTimecode(v.currentTime).replaceAll(':', '-') + '.jpg';
+                    this._uploadThumbnailBlob(accId, blob, name)
+                        .then(() => { this.closeFramePicker(); })
+                        .catch(() => {})
+                        .finally(() => { this.frameCapturing = false; });
+                }, 'image/jpeg', 0.9);
+            } catch (e) {
+                this.frameCapturing = false;
+                this.frameError = 'Cannot capture frames from this video (cross-origin storage). Upload a thumbnail instead.';
+            }
+        },
+
+        clearTiktokCover(accId) {
+            delete this.tiktokCoverPreview[accId];
+            if (this.platformExtras[accId]) {
+                delete this.platformExtras[accId].video_cover_timestamp_ms;
+            }
         },
 
         saveDraft() {
@@ -1923,17 +2549,10 @@ function composerApp() {
                     }
                     // Auto-set YouTube thumbnail to latest uploaded image
                     if (file.type.startsWith('image/')) {
-                        const assetId = xhr.getResponseHeader('X-Uploaded-Asset-Id');
-                        const imgUrl = xhr.getResponseHeader('X-Uploaded-Asset-Url');
-                        if (assetId && imgUrl) {
-                            self.selectedAccounts.forEach(function(accId) {
-                                if (self.charLimits[accId]?.platform === 'youtube') {
-                                    if (!self.platformExtras[accId]) self.platformExtras[accId] = {};
-                                    self.platformExtras[accId].thumbnail_asset_id = assetId;
-                                    self.platformExtras[accId].thumbnail_url = imgUrl;
-                                }
-                            });
-                        }
+                        self._applyYoutubeThumbnail(
+                            xhr.getResponseHeader('X-Uploaded-Asset-Id'),
+                            xhr.getResponseHeader('X-Uploaded-Asset-Url'),
+                        );
                     }
                     document.body.dispatchEvent(new CustomEvent('previewUpdate'));
                 } else {

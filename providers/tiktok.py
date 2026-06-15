@@ -330,13 +330,20 @@ class TikTokProvider(SocialProvider):
         return resp.json()
 
     def _build_post_info(self, content: PublishContent, privacy_level: str) -> dict:
-        post_info: dict[str, str | bool] = {
+        post_info: dict[str, str | bool | int] = {
             "title": (content.title or content.text or "")[: self.max_caption_length],
             "privacy_level": privacy_level,
         }
         for field in OPTIONAL_POST_INFO_FIELDS:
             if field in content.extra:
                 post_info[field] = bool(content.extra[field])
+        # Cover frame timestamp; TikTok defaults to the first frame when absent.
+        cover_ms = content.extra.get("video_cover_timestamp_ms")
+        if cover_ms is not None:
+            with contextlib.suppress(TypeError, ValueError):
+                cover_ms = int(cover_ms)
+                if cover_ms >= 0:
+                    post_info["video_cover_timestamp_ms"] = cover_ms
         return post_info
 
     def _raise_classified_publish_error(self, exc: APIError) -> NoReturn:

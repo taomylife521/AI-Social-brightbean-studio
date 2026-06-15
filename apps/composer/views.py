@@ -1,5 +1,6 @@
 """Views for the Post Composer (F-2.1)."""
 
+import base64
 import contextlib
 import json
 import re
@@ -9,11 +10,12 @@ from urllib.parse import urljoin
 
 import httpx
 from dateutil import parser as date_parser
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
 from django.core.exceptions import PermissionDenied, SuspiciousOperation, ValidationError
 from django.db import models, transaction
-from django.http import HttpResponse, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.utils import timezone
@@ -199,6 +201,19 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
             }
             if privacy:
                 extra["privacy_level"] = privacy
+            # Cover frame timestamp from the composer's frame picker; omitted
+            # when blank/invalid so TikTok falls back to the first frame.
+            # Parse with int() rather than str.isdigit() — isdigit() accepts
+            # non-ASCII digits (e.g. "²", "١٢") that int() then rejects with an
+            # unhandled ValueError.
+            cover_ms = request.POST.get(f"tiktok_video_cover_timestamp_ms_{acc_id}", "").strip()
+            if cover_ms:
+                try:
+                    cover_ms_val = int(cover_ms)
+                except ValueError:
+                    cover_ms_val = -1
+                if cover_ms_val >= 0:
+                    extra["video_cover_timestamp_ms"] = cover_ms_val
             pp.platform_extra = extra
 
         pp.save()
@@ -569,6 +584,7 @@ def compose(request, workspace_id, post_id=None):
         # that account — the save endpoints use this to leave siblings alone.
         "account_scope": account_filter if (post_id and account_filter) else "",
         "failed_platform_posts": failed_platform_posts,
+        "unsplash_enabled": bool(settings.UNSPLASH_ACCESS_KEY),
     }
     return render(request, "composer/compose.html", context)
 
@@ -1150,6 +1166,7 @@ def thumbnail_upload(request, workspace_id):
     from apps.media_library.models import MediaAsset
 
     asset = MediaAsset.objects.create(
+        organization=workspace.organization,
         workspace=workspace,
         uploaded_by=request.user,
         file=uploaded_file,
@@ -1171,6 +1188,412 @@ def thumbnail_upload(request, workspace_id):
             "asset_id": str(asset.id),
             "url": url,
             "filename": asset.filename,
+        }
+    )
+
+
+_RANGE_HEADER_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
+
+
+class _RangeFileIterator:
+    """Iterate a bounded byte window of an already-positioned file handle."""
+
+    def __init__(self, file_handle, remaining, chunk_size=64 * 1024):
+        self.file_handle = file_handle
+        self.remaining = remaining
+        self.chunk_size = chunk_size
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.remaining <= 0:
+            raise StopIteration
+        data = self.file_handle.read(min(self.chunk_size, self.remaining))
+        if not data:
+            raise StopIteration
+        self.remaining -= len(data)
+        return data
+
+    def close(self):
+        if hasattr(self.file_handle, "close"):
+            self.file_handle.close()
+
+
+@login_required
+@require_GET
+def media_stream(request, workspace_id, asset_id):
+    """Stream a media asset through the app's own origin, with Range support.
+
+    The composer's frame picker draws video frames onto a canvas, which the
+    browser only allows for same-origin (or CORS-approved) media. Object
+    storage like S3/R2 serves signed URLs from another origin, usually
+    without CORS headers, so the raw file URL would taint the canvas.
+
+    Byte-range requests matter here: without them the browser can't seek a
+    <video> beyond what it has buffered (the scrubber and filmstrip clicks
+    silently do nothing) and has to download the whole file up front.
+    """
+    workspace = _get_workspace(request, workspace_id)
+
+    from apps.media_library.models import MediaAsset
+
+    asset = get_object_or_404(
+        MediaAsset.objects.for_workspace_with_shared(
+            workspace_id=workspace.id,
+            organization_id=workspace.organization_id,
+        ),
+        pk=asset_id,
+    )
+    if not asset.file:
+        raise Http404
+    # The DB row can outlive the stored object (lifecycle rule, manual S3
+    # deletion); opening/stat-ing it then raises a backend error rather than
+    # returning an empty FieldFile, so map that to 404 instead of a 500.
+    try:
+        size = asset.file.size
+        file_handle = asset.file.open("rb")
+    except Exception:  # noqa: BLE001 - storage backends raise varied errors (OSError, botocore ClientError)
+        raise Http404 from None
+
+    content_type = asset.mime_type or "application/octet-stream"
+    range_match = _RANGE_HEADER_RE.match(request.headers.get("Range", ""))
+
+    if range_match and size:
+        start_str, end_str = range_match.groups()
+        if not start_str:
+            # Suffix range: the last N bytes.
+            length = min(int(end_str or 0), size)
+            start = size - length
+            end = size - 1
+        else:
+            start = int(start_str)
+            end = min(int(end_str), size - 1) if end_str else size - 1
+        if start >= size or start > end:
+            file_handle.close()
+            response = HttpResponse(status=416)
+            response["Content-Range"] = f"bytes */{size}"
+            return response
+        file_handle.seek(start)
+        response = StreamingHttpResponse(
+            _RangeFileIterator(file_handle, end - start + 1),
+            status=206,
+            content_type=content_type,
+        )
+        response["Content-Length"] = str(end - start + 1)
+        response["Content-Range"] = f"bytes {start}-{end}/{size}"
+    else:
+        response = FileResponse(file_handle, content_type=content_type)
+
+    response["Accept-Ranges"] = "bytes"
+    # Asset files are immutable per id - let the browser cache the stream so
+    # reopening the frame picker doesn't re-download the whole video.
+    response["Cache-Control"] = "private, max-age=3600"
+    return response
+
+
+@login_required
+@require_GET
+def media_filmstrip(request, workspace_id, asset_id):
+    """Return evenly-spaced thumbnail frames for the frame-picker filmstrip.
+
+    Extracted server-side with ffmpeg, which seeks each frame via byte ranges
+    instead of making the browser download (and decode) most of the video to
+    build the strip client-side.
+    """
+    workspace = _get_workspace(request, workspace_id)
+
+    import os
+    import tempfile
+
+    from apps.media_library.models import MediaAsset
+    from apps.media_library.services import extract_video_frames, extract_video_metadata
+
+    asset = get_object_or_404(
+        MediaAsset.objects.for_workspace_with_shared(
+            workspace_id=workspace.id,
+            organization_id=workspace.organization_id,
+        ),
+        pk=asset_id,
+    )
+    if asset.media_type != MediaAsset.MediaType.VIDEO or not asset.file:
+        raise Http404
+
+    # Mirror media_library's video pipeline: pull the file to one local temp
+    # file, then run all the ffmpeg seeks against it. Extracting each frame
+    # straight from the (remote) signed URL re-opens the connection and
+    # re-reads the moov atom every time - on R2 that was ~1.5s per frame.
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=f".{asset.file_extension}", delete=False) as tmp:
+            for chunk in asset.file.chunks():
+                tmp.write(chunk)
+            tmp_path = tmp.name
+    except Exception:  # noqa: BLE001 - storage backends raise varied errors when the object is gone
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise Http404 from None
+
+    try:
+        duration = asset.duration or extract_video_metadata(tmp_path).get("duration_seconds") or 0
+        if not duration:
+            return JsonResponse({"error": "Could not read video duration."}, status=502)
+
+        count = 8
+        timestamps = [round(duration * (i + 0.5) / count, 3) for i in range(count)]
+        jpegs = extract_video_frames(tmp_path, timestamps, width=160)
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+
+    frames = [
+        {"time": t, "dataUrl": "data:image/jpeg;base64," + base64.b64encode(jpg).decode()}
+        for t, jpg in zip(timestamps, jpegs, strict=False)
+        if jpg
+    ]
+    if not frames:
+        return JsonResponse({"error": "Could not extract frames."}, status=502)
+    return JsonResponse({"frames": frames, "duration": duration})
+
+
+UNSPLASH_API_BASE = "https://api.unsplash.com"
+UNSPLASH_IMAGE_HOST = "https://images.unsplash.com/"
+UNSPLASH_NOT_CONFIGURED = (
+    "Unsplash is not configured. Add UNSPLASH_ACCESS_KEY to your environment to enable stock-photo search."
+)
+UNSPLASH_MAX_IMPORT = 10
+UNSPLASH_MAX_IMAGE_BYTES = 15 * 1024 * 1024
+
+
+def _as_str(value):
+    """Coerce an external/client JSON field to a string.
+
+    Client- and Unsplash-supplied payloads can carry ``null`` (or numbers)
+    where we expect a URL/text, so guard before ``.startswith()`` or feeding
+    a model's non-null string column - otherwise an ``AttributeError`` (or
+    IntegrityError) turns a should-fail-gracefully path into a 500.
+    """
+    return value if isinstance(value, str) else ""
+
+
+@login_required
+@require_GET
+def unsplash_search(request, workspace_id):
+    """Proxy an Unsplash photo search so the API key stays server-side.
+
+    Returns results trimmed to what the composer modal needs. Grid images are
+    hotlinked from the Unsplash CDN per their API guidelines.
+    """
+    _get_workspace(request, workspace_id)
+
+    if not settings.UNSPLASH_ACCESS_KEY:
+        return JsonResponse({"error": UNSPLASH_NOT_CONFIGURED}, status=503)
+
+    query = request.GET.get("q", "").strip()
+    if not query:
+        return JsonResponse({"error": "Missing search query"}, status=400)
+
+    try:
+        resp = httpx.get(
+            f"{UNSPLASH_API_BASE}/search/photos",
+            params={"query": query, "page": 1, "per_page": 24},
+            headers={
+                "Authorization": f"Client-ID {settings.UNSPLASH_ACCESS_KEY}",
+                "Accept-Version": "v1",
+            },
+            timeout=10.0,
+        )
+    except httpx.RequestError:
+        return JsonResponse({"error": "Could not reach Unsplash. Try again."}, status=502)
+
+    if resp.status_code in (401, 403):
+        return JsonResponse({"error": "Unsplash rejected the API key. Check UNSPLASH_ACCESS_KEY."}, status=502)
+    if resp.status_code == 429:
+        return JsonResponse({"error": "Unsplash rate limit reached. Try again in a few minutes."}, status=429)
+    if resp.status_code != 200:
+        return JsonResponse({"error": "Unsplash search failed. Try again."}, status=502)
+
+    # A 200 with a malformed body or an unexpected result shape (e.g. a bare
+    # list or null instead of an object) must surface as a friendly 502, not
+    # an unhandled 500.
+    try:
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise ValueError("Unexpected Unsplash response shape")
+        results = [
+            {
+                "id": p["id"],
+                "thumb": p["urls"]["small"],
+                "full": p["urls"]["regular"],
+                "width": p.get("width"),
+                "height": p.get("height"),
+                "color": p.get("color"),
+                "alt": p.get("alt_description") or p.get("description") or "",
+                "photographer": p["user"]["name"],
+                "photographer_url": p["user"]["links"]["html"],
+                "photo_url": p["links"]["html"],
+                "download_location": p["links"]["download_location"],
+            }
+            for p in data.get("results", [])
+        ]
+        total = data.get("total", 0)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return JsonResponse({"error": "Unexpected response from Unsplash. Try again."}, status=502)
+    return JsonResponse({"results": results, "total": total})
+
+
+@login_required
+@require_POST
+def unsplash_import(request, workspace_id, post_id=None):
+    """Download selected Unsplash photos server-side and attach them as media.
+
+    Mirrors upload_media: attaches to the post when post_id is given, else
+    queues in the pending-media session. Hits each photo's download_location
+    first, as Unsplash's guidelines require when a photo is actually used.
+    """
+    workspace = _get_workspace(request, workspace_id)
+
+    if not settings.UNSPLASH_ACCESS_KEY:
+        return JsonResponse({"error": UNSPLASH_NOT_CONFIGURED}, status=503)
+
+    try:
+        payload = json.loads(request.body)
+        photos = payload["photos"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return JsonResponse({"error": "Invalid request body"}, status=400)
+
+    if not isinstance(photos, list) or not photos:
+        return JsonResponse({"error": "No photos selected"}, status=400)
+    if len(photos) > UNSPLASH_MAX_IMPORT:
+        return JsonResponse({"error": f"Select at most {UNSPLASH_MAX_IMPORT} photos per import."}, status=400)
+
+    from django.core.files.base import ContentFile
+
+    from apps.media_library.models import MediaAsset
+    from apps.media_library.quotas import StorageQuotaExceededError, enforce_storage_quota
+
+    post = None
+    if post_id:
+        post = get_object_or_404(Post, id=post_id, workspace=workspace)
+
+    auth_headers = {"Authorization": f"Client-ID {settings.UNSPLASH_ACCESS_KEY}"}
+    new_assets = []
+    attachments = []
+    failed = 0
+    quota_exceeded = False
+
+    # follow_redirects is OFF: the host allowlist below is only meaningful if a
+    # 30x can't bounce the request to an internal address (SSRF). One pooled
+    # client reuses connections across the per-photo registration + download.
+    with httpx.Client(follow_redirects=False, timeout=30.0) as client:
+        for photo in photos:
+            if not isinstance(photo, dict):
+                failed += 1
+                continue
+            photo_id = _as_str(photo.get("id")).strip()
+            download_location = _as_str(photo.get("download_location"))
+            fallback_url = _as_str(photo.get("full"))
+            # The client supplies these URLs - only ever fetch from Unsplash hosts.
+            if not photo_id or not download_location.startswith(f"{UNSPLASH_API_BASE}/"):
+                failed += 1
+                continue
+
+            content = None
+            content_type = ""
+            try:
+                # Register the download (required by Unsplash API guidelines);
+                # the response carries the actual file URL to fetch. A non-JSON
+                # body here must fail this one photo, not the whole request.
+                dl_resp = client.get(download_location, headers=auth_headers, timeout=10.0)
+                image_url = ""
+                if dl_resp.status_code == 200:
+                    # A non-JSON or non-object body must fail this one photo,
+                    # not 500 the whole request.
+                    with contextlib.suppress(ValueError, AttributeError):
+                        image_url = _as_str(dl_resp.json().get("url"))
+                if not image_url:
+                    image_url = fallback_url
+                if not image_url.startswith(UNSPLASH_IMAGE_HOST):
+                    failed += 1
+                    continue
+
+                # Stream and cap the download so a huge (or mis-declared) body
+                # can't be buffered whole - reject before exceeding the limit.
+                with client.stream("GET", image_url) as img_resp:
+                    content_type = img_resp.headers.get("content-type", "")
+                    declared = img_resp.headers.get("content-length", "")
+                    if (
+                        img_resp.status_code != 200
+                        or not content_type.startswith("image/")
+                        or (declared.isdigit() and int(declared) > UNSPLASH_MAX_IMAGE_BYTES)
+                    ):
+                        failed += 1
+                        continue
+                    buf = bytearray()
+                    for chunk in img_resp.iter_bytes():
+                        buf += chunk
+                        if len(buf) > UNSPLASH_MAX_IMAGE_BYTES:
+                            break
+                    if len(buf) > UNSPLASH_MAX_IMAGE_BYTES:
+                        failed += 1
+                        continue
+                    content = bytes(buf)
+            except httpx.HTTPError:
+                failed += 1
+                continue
+
+            try:
+                enforce_storage_quota(workspace.organization, len(content))
+            except StorageQuotaExceededError:
+                quota_exceeded = True
+                break
+
+            filename = f"unsplash-{photo_id}.jpg"
+            asset = MediaAsset.objects.create(
+                organization=workspace.organization,
+                workspace=workspace,
+                uploaded_by=request.user,
+                file=ContentFile(content, name=filename),
+                filename=filename,
+                media_type=MediaAsset.MediaType.IMAGE,
+                mime_type=content_type,
+                file_size=len(content),
+                source="unsplash",
+                source_url=_as_str(photo.get("photo_url")),
+                attribution=f"Photo by {_as_str(photo.get('photographer')) or 'Unknown'} on Unsplash",
+                alt_text=_as_str(photo.get("alt")),
+            )
+            new_assets.append(asset)
+            attachment = _attach_asset_for_composer(request, workspace, asset, post)
+            if attachment is not None:
+                attachments.append(attachment)
+
+    if not new_assets:
+        if quota_exceeded:
+            return JsonResponse(
+                {"error": "Storage quota exceeded. Free up space or upgrade your plan."},
+                status=413,
+            )
+        return JsonResponse({"error": "Could not import the selected photos."}, status=502)
+
+    if post is not None:
+        html = render_to_string(
+            "composer/partials/media_list.html",
+            {"media_attachments": attachments, "post": post, "workspace": workspace},
+            request=request,
+        )
+    else:
+        html = render_to_string(
+            "composer/partials/media_list_pending.html",
+            {"pending_assets": new_assets, "workspace": workspace},
+            request=request,
+        )
+
+    return JsonResponse(
+        {
+            "html": html,
+            "assets": [{"id": str(a.id), "url": a.file.url} for a in new_assets],
+            "failed": failed,
         }
     )
 
@@ -1224,21 +1647,41 @@ def tiktok_creator_info(request, workspace_id, account_id):
     credentials = resolve_platform_credentials("tiktok", workspace.organization_id)
     provider = get_provider("tiktok", credentials)
 
+    # This endpoint enriches the composer panel; the real privacy/audit gate is
+    # enforced at publish time. When the creator-info lookup can't run (no
+    # token, expired token, TikTok API down), degrade to a 200 with empty
+    # options and let the panel fall back to its defaults, rather than logging
+    # a 5xx in the browser on every composer load.
+    def _unavailable(reason):
+        return JsonResponse(
+            {
+                "available": False,
+                "error": reason,
+                "creator_nickname": "",
+                "privacy_level_options": [],
+                "comment_disabled": False,
+                "duet_disabled": False,
+                "stitch_disabled": False,
+                "max_video_post_duration_sec": None,
+            }
+        )
+
     # Refresh token if expiring
     access_token = account.oauth_access_token
     if account.token_expires_at and account.is_token_expiring_soon:
         try:
             access_token = account.refresh_oauth_token(provider)
         except Exception:
-            return JsonResponse({"privacy_level_options": [], "error": "Token refresh failed"}, status=502)
+            return _unavailable("Token refresh failed")
 
     try:
         info = provider.query_creator_info(access_token)
     except Exception:
-        return JsonResponse({"privacy_level_options": [], "error": "Failed to fetch creator info"}, status=502)
+        return _unavailable("Failed to fetch creator info")
 
     return JsonResponse(
         {
+            "available": True,
             "creator_nickname": info.get("creator_nickname", ""),
             "privacy_level_options": info.get("privacy_level_options") or [],
             "comment_disabled": bool(info.get("comment_disabled")),
@@ -1325,6 +1768,46 @@ def attach_pending_media(request, workspace_id):
     return response
 
 
+def _attach_asset_for_composer(request, workspace, asset, post=None):
+    """Attach an asset to a post, or queue it in the pending-media session.
+
+    Post path: migrates any session-pending media first (can happen when the
+    media picker still uses attach_pending_media after autosave created the
+    post and updated the upload URL), then appends the asset at the next
+    position. Returns the PostMedia attachment, or None on the pending path.
+    """
+    from apps.media_library.models import MediaAsset
+
+    session_key = f"pending_media_{workspace.id}"
+
+    if post is not None:
+        pending_ids = request.session.get(session_key, [])
+        if pending_ids:
+            existing_pos = post.media_attachments.aggregate(models.Max("position"))["position__max"] or 0
+            for idx, pid in enumerate(pending_ids):
+                try:
+                    pending_asset = MediaAsset.objects.get(id=pid, workspace=workspace)
+                    PostMedia.objects.get_or_create(
+                        post=post,
+                        media_asset=pending_asset,
+                        defaults={"position": existing_pos + idx + 1},
+                    )
+                except MediaAsset.DoesNotExist:
+                    continue
+            del request.session[session_key]
+
+        max_pos = post.media_attachments.aggregate(models.Max("position"))["position__max"]
+        position = (max_pos or 0) + 1
+        return PostMedia.objects.create(post=post, media_asset=asset, position=position)
+
+    # No post yet - store pending media IDs in session so they can be
+    # attached when the post is eventually saved.
+    pending = request.session.get(session_key, [])
+    pending.append(str(asset.id))
+    request.session[session_key] = pending
+    return None
+
+
 @login_required
 @require_POST
 def upload_media(request, workspace_id, post_id=None):
@@ -1349,6 +1832,7 @@ def upload_media(request, workspace_id, post_id=None):
         media_type = MediaAsset.MediaType.DOCUMENT
 
     asset = MediaAsset.objects.create(
+        organization=workspace.organization,
         workspace=workspace,
         uploaded_by=request.user,
         file=uploaded_file,
@@ -1359,33 +1843,9 @@ def upload_media(request, workspace_id, post_id=None):
         source="upload",
     )
 
-    # If a post ID is provided, attach immediately
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
-
-        # Migrate any session pending media to the post (can happen when the
-        # media picker still uses attach_pending_media after autosave created
-        # the post and updated the upload URL).
-        session_key = f"pending_media_{workspace.id}"
-        pending_ids = request.session.get(session_key, [])
-        if pending_ids:
-            existing_pos = post.media_attachments.aggregate(models.Max("position"))["position__max"] or 0
-            for idx, pid in enumerate(pending_ids):
-                try:
-                    pending_asset = MediaAsset.objects.get(id=pid, workspace=workspace)
-                    PostMedia.objects.get_or_create(
-                        post=post,
-                        media_asset=pending_asset,
-                        defaults={"position": existing_pos + idx + 1},
-                    )
-                except MediaAsset.DoesNotExist:
-                    continue
-            del request.session[session_key]
-
-        max_pos = post.media_attachments.aggregate(models.Max("position"))["position__max"]
-        position = (max_pos or 0) + 1
-        attachment = PostMedia.objects.create(post=post, media_asset=asset, position=position)
-
+        attachment = _attach_asset_for_composer(request, workspace, asset, post)
         response = render(
             request,
             "composer/partials/media_list.html",
@@ -1395,25 +1855,17 @@ def upload_media(request, workspace_id, post_id=None):
                 "workspace": workspace,
             },
         )
-        response["X-Uploaded-Asset-Id"] = str(asset.id)
-        response["X-Uploaded-Asset-Url"] = asset.file.url
-        return response
+    else:
+        _attach_asset_for_composer(request, workspace, asset)
+        response = render(
+            request,
+            "composer/partials/media_list_pending.html",
+            {
+                "pending_assets": [asset],
+                "workspace": workspace,
+            },
+        )
 
-    # No post yet - store pending media IDs in session so they can be
-    # attached when the post is eventually saved.
-    session_key = f"pending_media_{workspace.id}"
-    pending = request.session.get(session_key, [])
-    pending.append(str(asset.id))
-    request.session[session_key] = pending
-
-    response = render(
-        request,
-        "composer/partials/media_list_pending.html",
-        {
-            "pending_assets": [asset],
-            "workspace": workspace,
-        },
-    )
     response["X-Uploaded-Asset-Id"] = str(asset.id)
     response["X-Uploaded-Asset-Url"] = asset.file.url
     return response

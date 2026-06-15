@@ -233,6 +233,9 @@ AUTHENTICATION_BACKENDS = [
 GOOGLE_AUTH_CLIENT_ID = env("GOOGLE_AUTH_CLIENT_ID", default="")
 GOOGLE_AUTH_CLIENT_SECRET = env("GOOGLE_AUTH_CLIENT_SECRET", default="")
 
+# Unsplash stock-photo search in the composer (optional; empty disables the feature)
+UNSPLASH_ACCESS_KEY = env("UNSPLASH_ACCESS_KEY", default="")
+
 SOCIALACCOUNT_PROVIDERS = {
     "google": {
         "APP": {

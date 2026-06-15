@@ -337,6 +337,56 @@ def generate_video_thumbnail(file_path):
                 os.unlink(thumb_path)
 
 
+def extract_video_frames(source, timestamps, *, width=160, timeout=None):
+    """Extract one JPEG per timestamp from a video using ffmpeg input-seeking.
+
+    ``source`` is a local path or an http(s) URL (ffmpeg seeks remote inputs
+    via byte-range requests, so this stays cheap even for object storage).
+    Putting ``-ss`` before ``-i`` makes ffmpeg jump to the nearest keyframe
+    without decoding the whole file. Returns a list aligned with
+    ``timestamps``; entries are JPEG ``bytes`` or ``None`` on failure.
+    """
+    import contextlib
+
+    per_frame_timeout = timeout or getattr(settings, "MEDIA_LIBRARY_FFMPEG_TIMEOUT", 300)
+    frames = []
+    for t in timestamps:
+        fd, out_path = tempfile.mkstemp(suffix=".jpg", prefix="brightbean_frame_")
+        os.close(fd)
+        try:
+            result = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-ss",
+                    f"{max(0.0, float(t)):.3f}",
+                    "-i",
+                    str(source),
+                    "-frames:v",
+                    "1",
+                    "-vf",
+                    f"scale={int(width)}:-1",
+                    "-q:v",
+                    "5",
+                    "-y",
+                    out_path,
+                ],
+                capture_output=True,
+                timeout=per_frame_timeout,
+            )
+            if result.returncode == 0 and os.path.getsize(out_path) > 0:
+                with open(out_path, "rb") as f:
+                    frames.append(f.read())
+            else:
+                frames.append(None)
+        except Exception:
+            logger.exception("Failed to extract video frame at %ss", t)
+            frames.append(None)
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(out_path)
+    return frames
+
+
 def apply_image_edits(file_path_or_file, operations):
     """Apply image edits (crop, resize, rotate, flip) using Pillow.
 

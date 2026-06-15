@@ -556,6 +556,37 @@ class TestPublishPost:
         assert "brand_organic_toggle" not in post_info
 
     @patch.object(TikTokProvider, "_request")
+    def test_video_cover_timestamp_forwarded_as_int(self, mock_request):
+        mock_request.side_effect = [
+            _creator_info_response(["PUBLIC_TO_EVERYONE"]),
+            _init_response(),
+        ]
+
+        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
+        provider.publish_post("tok", _video_content(video_cover_timestamp_ms="12500"))
+
+        post_info = mock_request.call_args_list[1].kwargs["json"]["post_info"]
+        assert post_info["video_cover_timestamp_ms"] == 12500
+
+    @patch.object(TikTokProvider, "_request")
+    def test_video_cover_timestamp_invalid_or_absent_omitted(self, mock_request):
+        mock_request.side_effect = [
+            _creator_info_response(["PUBLIC_TO_EVERYONE"]),
+            _init_response(),
+            _creator_info_response(["PUBLIC_TO_EVERYONE"]),
+            _init_response(),
+        ]
+
+        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
+        provider.publish_post("tok", _video_content(video_cover_timestamp_ms="not-a-number"))
+        provider.publish_post("tok", _video_content())
+
+        first = mock_request.call_args_list[1].kwargs["json"]["post_info"]
+        second = mock_request.call_args_list[3].kwargs["json"]["post_info"]
+        assert "video_cover_timestamp_ms" not in first
+        assert "video_cover_timestamp_ms" not in second
+
+    @patch.object(TikTokProvider, "_request")
     def test_invalid_privacy_level_rejected_without_requests(self, mock_request):
         provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
         with pytest.raises(PublishError) as excinfo:
