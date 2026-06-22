@@ -208,6 +208,32 @@ class ResolvePublishCredentialsTest(SimpleTestCase):
 
         self.assertEqual(credentials["ig_user_id"], "17841400000000000")
 
+    @patch("apps.common.validators.is_safe_url", return_value=True)
+    @patch("apps.publisher.engine.resolve_platform_credentials", return_value={})
+    def test_bluesky_safe_pds_url_is_injected(self, _mock_resolve, _mock_is_safe_url):
+        account = MagicMock()
+        account.platform = "bluesky"
+        account.instance_url = "https://pds.example.com"
+        account.workspace.organization_id = "org-1"
+
+        credentials = _resolve_publish_credentials(account)
+
+        self.assertEqual(credentials["pds_url"], "https://pds.example.com")
+
+    @patch("apps.common.validators.is_safe_url", return_value=False)
+    @patch("apps.publisher.engine.resolve_platform_credentials", return_value={})
+    def test_bluesky_unsafe_pds_url_is_rejected(self, _mock_resolve, _mock_is_safe_url):
+        # The Bluesky pds_url sets the outbound host, so a URL that fails the SSRF
+        # check must not reach the provider — parity with the Mastodon gate.
+        account = MagicMock()
+        account.platform = "bluesky"
+        account.instance_url = "http://169.254.169.254"
+        account.workspace.organization_id = "org-1"
+
+        credentials = _resolve_publish_credentials(account)
+
+        self.assertNotIn("pds_url", credentials)
+
 
 class NonRetryableFailureTest(TestCase):
     """_publish_platform_post must honor the exception's ``retryable`` flag."""
