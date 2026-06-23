@@ -25,6 +25,7 @@ from apps.members.decorators import require_permission
 
 from .models import MastodonAppRegistration, PlatformVisibility, SocialAccount
 from .oauth_aliases import from_url_slug, redirect_uri_from_request, to_url_slug
+from .oauth_pkce import issue_pkce_verifier, pkce_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -261,15 +262,19 @@ def connect_platform(request, workspace_id):
     nonce = secrets.token_urlsafe(32)
     state = _sign_state(workspace_id, platform, request.user.id, nonce)
 
+    # PKCE verifier (e.g. TikTok); round-trips via the session alongside the nonce.
+    code_verifier = issue_pkce_verifier(provider)
+
     # Store nonce in session to prevent replay
     request.session[OAUTH_SESSION_KEY] = {
         "nonce": nonce,
         "workspace_id": str(workspace_id),
         "platform": platform,
+        "code_verifier": code_verifier,
     }
 
     redirect_uri = _build_redirect_uri(request, platform)
-    auth_url = provider.get_auth_url(redirect_uri, state)
+    auth_url = provider.get_auth_url(redirect_uri, state, **pkce_kwargs(code_verifier))
     return redirect(auth_url)
 
 
@@ -348,7 +353,7 @@ def oauth_callback(request, platform):
 
         provider = _get_provider_for_platform(platform, request.org.id, **extra_creds)
         redirect_uri = redirect_uri_from_request(request)
-        tokens = provider.exchange_code(code, redirect_uri)
+        tokens = provider.exchange_code(code, redirect_uri, **pkce_kwargs(session_data.get("code_verifier")))
 
         # Facebook/Instagram/LinkedIn Company: connect Pages, not personal profiles
         if platform in (
@@ -687,15 +692,17 @@ def reconnect(request, workspace_id, account_id):
     _apply_analytics_scope_flag(provider, platform)
     nonce = secrets.token_urlsafe(32)
     state = _sign_state(workspace_id, platform, request.user.id, nonce)
+    code_verifier = issue_pkce_verifier(provider)
 
     request.session[OAUTH_SESSION_KEY] = {
         "nonce": nonce,
         "workspace_id": str(workspace_id),
         "platform": platform,
+        "code_verifier": code_verifier,
     }
 
     redirect_uri = _build_redirect_uri(request, platform)
-    auth_url = provider.get_auth_url(redirect_uri, state)
+    auth_url = provider.get_auth_url(redirect_uri, state, **pkce_kwargs(code_verifier))
     return redirect(auth_url)
 
 
