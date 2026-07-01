@@ -139,6 +139,10 @@ class PublishEngine:
             )
             .annotate(effective_at=Coalesce("scheduled_at", "post__scheduled_at"))
             .filter(effective_at__lte=now)
+            # Never publish a post that has any platform on hold — a client hold
+            # parks the whole post out of the publish path even if a sibling
+            # platform is already scheduled.
+            .exclude(post__platform_posts__status=PlatformPost.Status.ON_HOLD)
             .select_related("post__workspace", "social_account")
             .order_by("effective_at")[:MAX_CONCURRENT_PUBLISHES]
         )
@@ -152,15 +156,21 @@ class PublishEngine:
         """
         # Lock and transition each due child from SCHEDULED → PUBLISHING.
         with transaction.atomic():
-            platform_posts = list(
+            # Lock ALL of this post's platform rows (not just the due scheduled
+            # ones) so a concurrent client hold serializes against publishing:
+            # request_hold()'s UPDATE on an approved sibling blocks on the locked
+            # row until we commit, and we re-check on_hold here under the lock.
+            locked = list(
                 PlatformPost.objects.select_for_update()
-                .filter(
-                    post_id=post.id,
-                    id__in=[pp.id for pp in due_pps],
-                    status=PlatformPost.Status.SCHEDULED,
-                )
+                .filter(post_id=post.id)
                 .select_related("social_account", "post__workspace")
             )
+
+            if any(pp.status == PlatformPost.Status.ON_HOLD for pp in locked):
+                return
+
+            due_ids = {pp.id for pp in due_pps}
+            platform_posts = [pp for pp in locked if pp.id in due_ids and pp.status == PlatformPost.Status.SCHEDULED]
 
             if not platform_posts:
                 return
@@ -548,14 +558,23 @@ class PublishEngine:
     def _process_retries(self):
         """Process platform posts that are due for retry."""
         now = timezone.now()
-        retry_posts = PlatformPost.objects.filter(
-            status=PlatformPost.Status.SCHEDULED,
-            retry_count__gt=0,
-            retry_count__lte=MAX_RETRIES,
-            next_retry_at__lte=now,
-        ).select_related("social_account", "post")
+        # Mirror the primary due-query's hold guard: a retrying child must not
+        # publish while any sibling is on_hold (the exclude covers the query
+        # window; the per-row re-check below closes a hold placed after it).
+        retry_posts = (
+            PlatformPost.objects.filter(
+                status=PlatformPost.Status.SCHEDULED,
+                retry_count__gt=0,
+                retry_count__lte=MAX_RETRIES,
+                next_retry_at__lte=now,
+            )
+            .exclude(post__platform_posts__status=PlatformPost.Status.ON_HOLD)
+            .select_related("social_account", "post")
+        )
 
         for pp in retry_posts:
+            if pp.post.platform_posts.filter(status=PlatformPost.Status.ON_HOLD).exists():
+                continue
             try:
                 pp.status = PlatformPost.Status.PUBLISHING
                 pp.save(update_fields=["status", "updated_at"])

@@ -1498,22 +1498,45 @@
                 <svg class="w-4 h-4 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                 <span class="text-sm font-medium text-red-700">Rejected - edit and resubmit or delete</span>
             </div>
+            {% elif post.status == 'approved' %}
+            <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-teal-50 border border-teal-100 mb-3">
+                <svg class="w-4 h-4 text-teal-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span class="text-sm font-medium text-teal-700">Approved - saving changes sends it back for re-approval</span>
+            </div>
+            {% elif post.status == 'on_hold' %}
+            <div class="flex items-center gap-2 px-3 py-2 rounded-lg mb-3" style="background:#F5F3FF;border:1px solid #DDD6FE;">
+                <svg class="w-4 h-4 flex-shrink-0" style="color:#7C3AED;" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+                <span class="text-sm font-medium" style="color:#6D28D9;">On hold - a client paused this; resume it from the approvals queue</span>
+            </div>
+            {% endif %}
+
+            <!-- Reviewer feedback to address (latest changes-requested / rejected comment) -->
+            {% if show_resubmit_button and latest_feedback %}
+            <div class="flex gap-3 p-4 rounded-xl mb-3" style="background:#FFF7ED;border:1px solid #FED7AA;">
+                <span class="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0" style="background: var(--primary);">{{ latest_feedback.user.display_name|default:"?"|make_list|first|upper }}</span>
+                <div class="min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-[0.8125rem] font-semibold text-stone-800">{{ latest_feedback.user.display_name|default:"Reviewer" }}</span>
+                        <span class="text-[0.6875rem] font-semibold px-2 py-0.5 rounded-full" style="background:#FFEDD5;color:#C2410C;">{% if latest_feedback.action == 'rejected' %}rejected{% else %}requested changes{% endif %}</span>
+                        <span class="text-[0.6875rem] text-stone-400">{{ latest_feedback.created_at|timesince }} ago</span>
+                    </div>
+                    <p class="text-[0.875rem] text-stone-700 mt-1 leading-relaxed">{{ latest_feedback.comment }}</p>
+                </div>
+            </div>
             {% endif %}
 
             <!-- Inline approval actions for reviewers -->
-            {% if can_approve and post.status in 'pending_review,pending_client' %}
-            <div class="flex gap-2 mb-3" x-data="{ showReviewComment: false }">
-                <form method="post" action="{% url 'approvals:approve' workspace_id=workspace.id post_id=post.id %}" class="inline">
-                    {% csrf_token %}
-                    <button type="submit" class="px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-500 hover:bg-emerald-600 text-white transition-colors">Approve</button>
-                </form>
+            {% if can_approve and post.status == 'pending_review' or can_approve and post.status == 'pending_client' %}
+            <div class="flex gap-2 mb-3 relative" x-data="{ showReviewComment: false, reviewComment: '' }">
+                <button hx-post="{% url 'approvals:approve' workspace_id=workspace.id post_id=post.id %}" hx-swap="none"
+                        class="px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-500 hover:bg-emerald-600 text-white transition-colors">Approve</button>
                 <button @click="showReviewComment = !showReviewComment" class="px-3 py-1.5 text-xs font-semibold rounded-full border border-stone-200 text-stone-600 hover:bg-stone-50 transition-colors">Request Changes</button>
                 <div x-show="showReviewComment" x-cloak class="absolute mt-9 z-10 bg-white rounded-lg shadow-lg border border-stone-200 p-3 w-80">
-                    <form method="post" action="{% url 'approvals:request_changes' workspace_id=workspace.id post_id=post.id %}">
-                        {% csrf_token %}
-                        <textarea name="comment" rows="2" required class="w-full px-2 py-1.5 text-sm border border-stone-200 rounded-lg resize-none" placeholder="What needs to change?"></textarea>
-                        <button type="submit" class="mt-2 px-3 py-1 text-xs font-semibold rounded-full bg-amber-500 text-white">Submit</button>
-                    </form>
+                    <textarea id="composer-review-comment" name="comment" rows="2" x-model="reviewComment" class="w-full px-2 py-1.5 text-sm border border-stone-200 rounded-lg resize-none" placeholder="What needs to change?"></textarea>
+                    <button hx-post="{% url 'approvals:request_changes' workspace_id=workspace.id post_id=post.id %}"
+                            hx-include="#composer-review-comment" hx-swap="none"
+                            :disabled="!reviewComment.trim()" :class="!reviewComment.trim() && 'opacity-50 cursor-not-allowed'"
+                            class="mt-2 px-3 py-1 text-xs font-semibold rounded-full bg-amber-500 text-white">Submit</button>
                 </div>
             </div>
             {% endif %}
@@ -1919,9 +1942,18 @@
     </div>
     {% endif %}
 </div>
+{# Toast host for approval-action feedback (outside htmx-swapped regions) #}
+{% include "approvals/partials/_toasts.html" %}
 {% endblock %}
 
 {% block extra_js %}
+<script nonce="{{ request.csp_nonce }}">
+  // Reviewer approve / request-changes return 204 + toast + approvalAction. Let the
+  // toast show, then reload so the status banner and history reflect the new state.
+  document.body.addEventListener('approvalAction', function () {
+    setTimeout(function () { window.location.reload(); }, 1100);
+  });
+</script>
 {{ selected_account_ids|json_script:"composer-selected-accounts" }}
 {{ char_limits|json_script:"composer-char-limits" }}
 {{ platform_extras|json_script:"composer-platform-extras" }}
